@@ -43,6 +43,7 @@ typedef enum {
 	EMR_READ_XMP,
 	EMR_READ_ICC,
 	EMR_READ_IPTC,
+	EMR_READ_COMMENT,
 	EMR_FINISHED
 } EomMetadataReaderState;
 
@@ -53,11 +54,72 @@ typedef enum {
 } EomJpegApp1Type;
 
 #define EOM_JPEG_MARKER_START   0xFF
+#define EOM_JPEG_MARKER_SOF0    0xC0
+#define EOM_JPEG_MARKER_SOF1    0xC1
+#define EOM_JPEG_MARKER_SOF2    0xC2
+#define EOM_JPEG_MARKER_SOF3    0xC3
+#define EOM_JPEG_MARKER_DHT     0xC4
+#define EOM_JPEG_MARKER_SOF5    0xC5
+#define EOM_JPEG_MARKER_SOF6    0xC6
+#define EOM_JPEG_MARKER_SOF7    0xC7
+#define EOM_JPEG_MARKER_JPG_EXT 0xC8
+#define EOM_JPEG_MARKER_SOF9    0xC9
+#define EOM_JPEG_MARKER_SOF10   0xCA
+#define EOM_JPEG_MARKER_SOF11   0xCB
+#define EOM_JPEG_MARKER_DAC     0xCC
+#define EOM_JPEG_MARKER_SOF13   0xCD
+#define EOM_JPEG_MARKER_SOF14   0xCE
+#define EOM_JPEG_MARKER_SOF15   0xCF
+#define EOM_JPEG_MARKER_RST0    0xD0
+#define EOM_JPEG_MARKER_RST1    0xD1
+#define EOM_JPEG_MARKER_RST2    0xD2
+#define EOM_JPEG_MARKER_RST3    0xD3
+#define EOM_JPEG_MARKER_RST4    0xD4
+#define EOM_JPEG_MARKER_RST5    0xD5
+#define EOM_JPEG_MARKER_RST6    0xD6
+#define EOM_JPEG_MARKER_RST7    0xD7
+#define EOM_JPEG_MARKER_SOI     0xD8
+#define EOM_JPEG_MARKER_EOI     0xD9
+#define EOM_JPEG_MARKER_SOS     0xDA
+#define EOM_JPEG_MARKER_DQT     0xDB
+#define EOM_JPEG_MARKER_DNL     0xDC
+#define EOM_JPEG_MARKER_DRI     0xDD
+#define EOM_JPEG_MARKER_DHP     0xDE
+#define EOM_JPEG_MARKER_EXP     0xDF
+#define EOM_JPEG_MARKER_APP0    0xE0
 #define EOM_JPEG_MARKER_APP1	0xE1
 #define EOM_JPEG_MARKER_APP2	0xE2
+#define EOM_JPEG_MARKER_APP3    0xE3
+#define EOM_JPEG_MARKER_APP4    0xE4
+#define EOM_JPEG_MARKER_APP5    0xE5
+#define EOM_JPEG_MARKER_APP6    0xE6
+#define EOM_JPEG_MARKER_APP7    0xE7
+#define EOM_JPEG_MARKER_APP8    0xE8
+#define EOM_JPEG_MARKER_APP9    0xE9
+#define EOM_JPEG_MARKER_APP10   0xEA
+#define EOM_JPEG_MARKER_APP11   0xEB
+#define EOM_JPEG_MARKER_APP12   0xEC
 #define EOM_JPEG_MARKER_APP14	0xED
+#define EOM_JPEG_MARKER_APP13   0xEE
+#define EOM_JPEG_MARKER_APP15   0xEF
+#define EOM_JPEG_MARKER_JPG0    0xF0
+#define EOM_JPEG_MARKER_JPG1    0xF1
+#define EOM_JPEG_MARKER_JPG2    0xF2
+#define EOM_JPEG_MARKER_JPG3    0xF3
+#define EOM_JPEG_MARKER_JPG4    0xF4
+#define EOM_JPEG_MARKER_JPG5    0xF5
+#define EOM_JPEG_MARKER_JPG6    0xF6
+#define EOM_JPEG_MARKER_JPG7    0xF7
+#define EOM_JPEG_MARKER_JPG8    0xF8
+#define EOM_JPEG_MARKER_JPG9    0xF9
+#define EOM_JPEG_MARKER_JPG10   0xFA
+#define EOM_JPEG_MARKER_JPG11   0xFB
+#define EOM_JPEG_MARKER_JPG12   0xFC
+#define EOM_JPEG_MARKER_JPG13   0xFD
+#define EOM_JPEG_MARKER_COMMENT 0xFE
 
 #define IS_FINISHED(priv) (priv->state == EMR_READ  && \
+                           priv->comment_chunk != NULL && \
                            priv->exif_chunk != NULL && \
                            priv->icc_chunk  != NULL && \
                            priv->iptc_chunk != NULL && \
@@ -78,6 +140,9 @@ struct _EomMetadataReaderJpgPrivate {
 
 	gpointer xmp_chunk;
 	guint xmp_len;
+
+	guint    comment_len;
+	gpointer comment_chunk;
 
 	/* management fields */
 	int      size;
@@ -102,6 +167,11 @@ eom_metadata_reader_jpg_dispose (GObject *object)
 	if (emr->priv->exif_chunk != NULL) {
 		g_free (emr->priv->exif_chunk);
 		emr->priv->exif_chunk = NULL;
+	}
+
+	if (emr->priv->comment_chunk != NULL) {
+		g_free (emr->priv->comment_chunk);
+		emr->priv->comment_chunk = NULL;
 	}
 
 	if (emr->priv->iptc_chunk != NULL) {
@@ -134,6 +204,8 @@ eom_metadata_reader_jpg_init (EomMetadataReaderJpg *emr)
 	priv->iptc_len = 0;
 	priv->icc_chunk = NULL;
 	priv->icc_len = 0;
+	priv->comment_chunk = NULL;
+	priv->comment_len = 0;
 }
 
 static void
@@ -223,7 +295,15 @@ eom_metadata_reader_jpg_consume (EomMetadataReaderJpg *emr, const guchar *buf, g
 			break;
 
 		case EMR_READ_MARKER:
-			if ((buf [i] & 0xF0) == 0xE0 || buf[i] == 0xFE) {
+			if ((buf [i] & 0xF0) == 0xE0 ||
+					(buf[i] >= EOM_JPEG_MARKER_SOF0 && buf[i] <= EOM_JPEG_MARKER_SOF15 && buf[i] != EOM_JPEG_MARKER_JPG_EXT) ||
+//					buf[i] == EOM_JPEG_MARKER_DHT || buf[i] == EOM_JPEG_MARKER_DAC ||  // Included in the above line
+					buf[i] == EOM_JPEG_MARKER_DQT ||
+					buf[i] == EOM_JPEG_MARKER_DNL ||
+					buf[i] == EOM_JPEG_MARKER_DRI ||
+					buf[i] == EOM_JPEG_MARKER_DHP ||
+					buf[i] == EOM_JPEG_MARKER_EXP ||
+					(buf[i] >= EOM_JPEG_MARKER_JPG0 && buf[i] <= EOM_JPEG_MARKER_COMMENT)) {
 			/* we are reading some sort of APPxx or COM marker */
 				/* these are always followed by 2 bytes of size information */
 				priv->last_marker = buf [i];
@@ -264,7 +344,12 @@ eom_metadata_reader_jpg_consume (EomMetadataReaderJpg *emr, const guchar *buf, g
 				priv->iptc_chunk == NULL)
 			{
 				priv->state = EMR_READ_IPTC;
-			} else {
+			} else if (priv->last_marker == EOM_JPEG_MARKER_COMMENT && priv->comment_chunk == NULL) {
+				priv->state = EMR_READ_COMMENT;
+			} else if (priv->last_marker == EOM_JPEG_MARKER_SOS) {
+				priv->state = EMR_FINISHED;
+			}
+			else {
 				priv->state = EMR_SKIP_BYTES;
 			}
 
@@ -285,6 +370,20 @@ eom_metadata_reader_jpg_consume (EomMetadataReaderJpg *emr, const guchar *buf, g
 			if (priv->size == 0) { /* don't need to skip any more bytes */
 				priv->state = EMR_READ;
 			}
+			break;
+
+		case EMR_READ_COMMENT:
+			eom_debug_message (DEBUG_IMAGE_DATA, "Read continuation of comment data, length: %i", priv->size);
+
+			if (priv->comment_chunk == NULL) {
+				priv->comment_chunk = g_new0 (guchar, priv->size);
+				priv->comment_len = priv->size;
+				priv->bytes_read = 0;
+			}
+
+			eom_metadata_reader_get_next_block (priv, priv->comment_chunk, &i, buf, len, EMR_READ_COMMENT);
+			if (IS_FINISHED(priv))
+				priv->state = EMR_FINISHED;
 			break;
 
 		case EMR_READ_APP1:
