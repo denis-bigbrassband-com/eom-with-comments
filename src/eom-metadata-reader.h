@@ -61,6 +61,8 @@ struct _EomMetadataReaderInterface {
 	gpointer	(*get_icc_profile)	(EomMetadataReader *self);
 
 	gpointer	(*get_xmp_ptr)		(EomMetadataReader *self);
+
+	gpointer	(*get_comment)		(EomMetadataReader *self);
 };
 
 typedef enum {
@@ -96,6 +98,9 @@ ExifData*            eom_metadata_reader_get_exif_data	(EomMetadataReader *emr);
 G_GNUC_INTERNAL
 XmpPtr	     	     eom_metadata_reader_get_xmp_data	(EomMetadataReader *emr);
 #endif
+
+G_GNUC_INTERNAL
+gchar	       *eom_metadata_reader_get_comment	(EomMetadataReader *emr);
 
 #if 0
 gpointer             eom_metadata_reader_get_iptc_chunk	(EomMetadataReader *emr);

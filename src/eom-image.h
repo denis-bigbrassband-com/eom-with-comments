@@ -165,6 +165,8 @@ void              eom_image_modified                 (EomImage   *img);
 
 const gchar*      eom_image_get_caption              (EomImage   *img);
 
+const gchar*      eom_image_get_comment              (EomImage   *img);
+
 const gchar      *eom_image_get_collate_key          (EomImage   *img);
 
 #ifdef HAVE_EXIF

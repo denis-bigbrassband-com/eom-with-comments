@@ -171,6 +171,11 @@ eom_image_dispose (GObject *object)
 		priv->caption = NULL;
 	}
 
+	if (priv->comment) {
+		g_free (priv->comment);
+		priv->comment = NULL;
+	}
+
 	if (priv->collate_key) {
 		g_free (priv->collate_key);
 		priv->collate_key = NULL;
@@ -817,6 +822,27 @@ eom_image_set_xmp_data (EomImage *img, EomMetadataReader *md_reader)
 #endif
 
 static void
+eom_image_set_comment_data (EomImage *img, EomMetadataReader *md_reader)
+{
+	EomImagePrivate *priv;
+	gchar *comment;
+
+	g_return_if_fail (EOM_IS_IMAGE (img));
+
+	priv = img->priv;
+
+	if (priv->comment) {
+		g_free (priv->comment);
+		priv->comment = NULL;
+	}
+
+	comment = eom_metadata_reader_get_comment (md_reader);
+
+	/* Ownership of the returned string is transferred to the image */
+	priv->comment = comment;
+}
+
+static void
 eom_image_set_exif_data (EomImage *img, EomMetadataReader *md_reader)
 {
 	EomImagePrivate *priv;
@@ -1068,6 +1094,7 @@ eom_image_real_load (EomImage *img,
 #ifdef HAVE_EXEMPI
 					eom_image_set_xmp_data (img, md_reader);
 #endif
+					eom_image_set_comment_data (img, md_reader);
 					set_metadata = FALSE;
 					priv->metadata_status = EOM_IMAGE_METADATA_READY;
 				}
@@ -1979,6 +2006,18 @@ eom_image_get_caption (EomImage *img)
 	g_free (scheme);
 
 	return priv->caption;
+}
+
+const gchar*
+eom_image_get_comment (EomImage *img)
+{
+	EomImagePrivate *priv;
+
+	g_return_val_if_fail (EOM_IS_IMAGE (img), NULL);
+
+	priv = img->priv;
+
+	return priv->comment;
 }
 
 const gchar*

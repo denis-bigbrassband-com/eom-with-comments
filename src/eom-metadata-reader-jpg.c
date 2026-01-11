@@ -31,6 +31,7 @@
 #include "eom-metadata-reader.h"
 #include "eom-metadata-reader-jpg.h"
 #include "eom-debug.h"
+#include "eom-util.h"
 
 typedef enum {
 	EMR_READ = 0,
@@ -214,6 +215,33 @@ eom_metadata_reader_jpg_class_init (EomMetadataReaderJpgClass *klass)
 	GObjectClass *object_class = (GObjectClass*) klass;
 
 	object_class->dispose = eom_metadata_reader_jpg_dispose;
+}
+
+static gpointer
+eom_metadata_reader_jpg_get_comment_data (EomMetadataReaderJpg *emr)
+{
+	EomMetadataReaderJpgPrivate *priv;
+	gchar *comment, *utf8_comment;
+
+	g_return_val_if_fail (EOM_IS_METADATA_READER_JPG (emr), NULL);
+
+	priv = emr->priv;
+
+	if (priv->comment_chunk == NULL || priv->comment_len == 0) {
+		return NULL;
+	}
+
+	/* JPEG COM segments are arbitrary bytes; make a best-effort UTF-8 string */
+	comment = g_strndup ((const gchar *) priv->comment_chunk, priv->comment_len);
+
+	if (g_utf8_validate (comment, -1, NULL)) {
+		return comment;
+	}
+
+	utf8_comment = eom_util_make_valid_utf8 (comment);
+	g_free (comment);
+
+	return utf8_comment;
 }
 
 static gboolean
@@ -759,5 +787,8 @@ eom_metadata_reader_jpg_init_emr_iface (gpointer g_iface, gpointer iface_data)
 		(gpointer (*) (EomMetadataReader *self))
 			eom_metadata_reader_jpg_get_xmp_data;
 #endif
+	iface->get_comment =
+		(gpointer (*) (EomMetadataReader *self))
+			eom_metadata_reader_jpg_get_comment_data;
 }
 

@@ -55,6 +55,7 @@
 #include "eom-clipboard-handler.h"
 #include "eom-window-activatable.h"
 #include "eom-metadata-sidebar.h"
+#include "eom-image.h"
 
 #include "eom-enum-types.h"
 
@@ -489,6 +490,7 @@ update_status_bar (EomWindow *window)
 {
 	EomWindowPrivate *priv;
 	char *str = NULL;
+	const gchar *comment;
 
 	g_return_if_fail (EOM_IS_WINDOW (window));
 
@@ -531,6 +533,42 @@ update_status_bar (EomWindow *window)
 			}
 		}
 		update_image_pos (window);
+	}
+
+	/* Append JPEG comment (if any) to the status bar text. */
+	comment = NULL;
+	if (priv->image != NULL) {
+		comment = eom_image_get_comment (priv->image);
+	}
+
+	if (comment != NULL && *comment != '\0') {
+		char *clean_comment;
+		char *truncated;
+		char *with_comment;
+
+		/* Replace newlines with spaces to keep the status bar single-line */
+		clean_comment = g_strdup (comment);
+		g_strdelimit (clean_comment, "\r\n\t", ' ');
+
+		/* Avoid overly long comments in the status bar */
+		if (g_utf8_strlen (clean_comment, -1) > 200) {
+			gchar *tmp = g_utf8_substring (clean_comment, 0, 200);
+			truncated = g_strconcat (tmp, "…", NULL);
+			g_free (tmp);
+			g_free (clean_comment);
+		} else {
+			truncated = clean_comment;
+		}
+
+		if (str != NULL && *str != '\0') {
+			with_comment = g_strdup_printf ("%s   %s", str, truncated);
+			g_free (str);
+		} else {
+			with_comment = g_strdup (truncated);
+		}
+
+		g_free (truncated);
+		str = with_comment;
 	}
 
 	gtk_statusbar_pop (GTK_STATUSBAR (priv->statusbar),

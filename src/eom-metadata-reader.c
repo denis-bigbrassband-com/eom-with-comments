@@ -93,6 +93,12 @@ eom_metadata_reader_get_xmp_data (EomMetadataReader *emr)
 }
 #endif
 
+gchar *
+eom_metadata_reader_get_comment (EomMetadataReader *emr)
+{
+	return (gchar *) EOM_METADATA_READER_GET_INTERFACE (emr)->get_comment (emr);
+}
+
 #if defined(HAVE_LCMS) && defined(GDK_WINDOWING_X11)
 cmsHPROFILE
 eom_metadata_reader_get_icc_profile (EomMetadataReader *emr)
@@ -128,4 +134,5 @@ eom_metadata_reader_default_init (EomMetadataReaderInterface *iface)
 	iface->get_exif_data = _eom_metadata_reader_default_get_null;
 	iface->get_icc_profile = _eom_metadata_reader_default_get_null;
 	iface->get_xmp_ptr = _eom_metadata_reader_default_get_null;
+	iface->get_comment = _eom_metadata_reader_default_get_null;
 }

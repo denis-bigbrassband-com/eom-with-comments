@@ -78,6 +78,7 @@ struct _EomImagePrivate {
 #endif
 
 	gchar            *caption;
+	gchar            *comment;
 
 	gchar            *collate_key;
 
