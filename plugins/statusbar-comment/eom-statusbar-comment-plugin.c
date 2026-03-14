@@ -25,6 +25,7 @@
 
 #include <gmodule.h>
 #include <libpeas/peas-activatable.h>
+#include <pango/pango.h>
 
 #include <eom-debug.h>
 #include <eom-image.h>
@@ -47,36 +48,38 @@ enum {
 };
 
 static void
-statusbar_set_comment (GtkStatusbar *statusbar,
+statusbar_set_comment (GtkLabel    *statusbar_comment,
                        EomThumbView *view)
 {
 	EomImage *image;
 	const gchar *comment;
 	gchar *clean_comment;
 
-	gtk_statusbar_pop (statusbar, 0);
-
 	if (eom_thumb_view_get_n_selected (view) == 0) {
-		gtk_widget_hide (GTK_WIDGET (statusbar));
+		gtk_label_set_text (statusbar_comment, "");
+		gtk_widget_hide (GTK_WIDGET (statusbar_comment));
 		return;
 	}
 
 	image = eom_thumb_view_get_first_selected_image (view);
 	if (image == NULL) {
-		gtk_widget_hide (GTK_WIDGET (statusbar));
+		gtk_label_set_text (statusbar_comment, "");
+		gtk_widget_hide (GTK_WIDGET (statusbar_comment));
 		return;
 	}
 
 	if (!eom_image_has_data (image, EOM_IMAGE_DATA_EXIF)) {
 		if (!eom_image_load (image, EOM_IMAGE_DATA_EXIF, NULL, NULL)) {
-			gtk_widget_hide (GTK_WIDGET (statusbar));
+			gtk_label_set_text (statusbar_comment, "");
+			gtk_widget_hide (GTK_WIDGET (statusbar_comment));
 			return;
 		}
 	}
 
 	comment = eom_image_get_comment (image);
 	if (comment == NULL || *comment == '\0') {
-		gtk_widget_hide (GTK_WIDGET (statusbar));
+		gtk_label_set_text (statusbar_comment, "");
+		gtk_widget_hide (GTK_WIDGET (statusbar_comment));
 		return;
 	}
 
@@ -85,13 +88,14 @@ statusbar_set_comment (GtkStatusbar *statusbar,
 	g_strstrip (clean_comment);
 
 	if (*clean_comment == '\0') {
-		gtk_widget_hide (GTK_WIDGET (statusbar));
+		gtk_label_set_text (statusbar_comment, "");
+		gtk_widget_hide (GTK_WIDGET (statusbar_comment));
 		g_free (clean_comment);
 		return;
 	}
 
-	gtk_statusbar_push (statusbar, 0, clean_comment);
-	gtk_widget_show (GTK_WIDGET (statusbar));
+	gtk_label_set_text (statusbar_comment, clean_comment);
+	gtk_widget_show (GTK_WIDGET (statusbar_comment));
 	g_free (clean_comment);
 }
 
@@ -99,7 +103,7 @@ static void
 selection_changed_cb (EomThumbView              *view,
                       EomStatusbarCommentPlugin *plugin)
 {
-	statusbar_set_comment (GTK_STATUSBAR (plugin->statusbar_comment), view);
+	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment), view);
 }
 
 static void
@@ -171,16 +175,22 @@ eom_statusbar_comment_plugin_activate (EomWindowActivatable *activatable)
 
 	eom_debug (DEBUG_PLUGINS);
 
-	plugin->statusbar_comment = gtk_statusbar_new ();
-	gtk_widget_set_size_request (plugin->statusbar_comment, 200, 10);
+	plugin->statusbar_comment = gtk_label_new (NULL);
+	gtk_label_set_xalign (GTK_LABEL (plugin->statusbar_comment), 0.0f);
+	gtk_widget_set_hexpand (plugin->statusbar_comment, TRUE);
+	gtk_widget_set_halign (plugin->statusbar_comment, GTK_ALIGN_START);
+	gtk_widget_set_valign (plugin->statusbar_comment, GTK_ALIGN_CENTER);
+	gtk_widget_set_margin_start (plugin->statusbar_comment, 8);
 	gtk_widget_set_margin_top (GTK_WIDGET (plugin->statusbar_comment), 0);
 	gtk_widget_set_margin_bottom (GTK_WIDGET (plugin->statusbar_comment), 0);
-	gtk_box_pack_end (GTK_BOX (statusbar), plugin->statusbar_comment, FALSE, FALSE, 0);
+	gtk_label_set_ellipsize (GTK_LABEL (plugin->statusbar_comment), PANGO_ELLIPSIZE_END);
+	gtk_box_pack_start (GTK_BOX (statusbar), plugin->statusbar_comment, TRUE, TRUE, 0);
+	gtk_box_reorder_child (GTK_BOX (statusbar), plugin->statusbar_comment, 1);
 
 	plugin->signal_id = g_signal_connect_after (G_OBJECT (thumbview), "selection_changed",
 	                                            G_CALLBACK (selection_changed_cb), plugin);
 
-	statusbar_set_comment (GTK_STATUSBAR (plugin->statusbar_comment),
+	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
 	                       EOM_THUMB_VIEW (thumbview));
 }
 
