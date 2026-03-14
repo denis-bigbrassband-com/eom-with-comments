@@ -323,7 +323,10 @@ eom_metadata_reader_jpg_consume (EomMetadataReaderJpg *emr, const guchar *buf, g
 			break;
 
 		case EMR_READ_MARKER:
-			if ((buf [i] & 0xF0) == 0xE0 ||
+			/* Stop metadata parsing at start/end of image scan data. */
+			if (buf[i] == EOM_JPEG_MARKER_SOS || buf[i] == EOM_JPEG_MARKER_EOI) {
+				priv->state = EMR_FINISHED;
+			} else if ((buf [i] & 0xF0) == 0xE0 ||
 					(buf[i] >= EOM_JPEG_MARKER_SOF0 && buf[i] <= EOM_JPEG_MARKER_SOF15 && buf[i] != EOM_JPEG_MARKER_JPG_EXT) ||
 //					buf[i] == EOM_JPEG_MARKER_DHT || buf[i] == EOM_JPEG_MARKER_DAC ||  // Included in the above line
 					buf[i] == EOM_JPEG_MARKER_DQT ||
@@ -374,8 +377,6 @@ eom_metadata_reader_jpg_consume (EomMetadataReaderJpg *emr, const guchar *buf, g
 				priv->state = EMR_READ_IPTC;
 			} else if (priv->last_marker == EOM_JPEG_MARKER_COMMENT && priv->comment_chunk == NULL) {
 				priv->state = EMR_READ_COMMENT;
-			} else if (priv->last_marker == EOM_JPEG_MARKER_SOS) {
-				priv->state = EMR_FINISHED;
 			}
 			else {
 				priv->state = EMR_SKIP_BYTES;
