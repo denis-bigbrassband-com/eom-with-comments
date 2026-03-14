@@ -13,6 +13,7 @@ plugins/fullscreen/eom-fullscreen-plugin.c
 plugins/fullscreen/fullscreen.plugin.desktop.in.in
 plugins/reload/eom-reload-plugin.c
 plugins/reload/reload.plugin.desktop.in.in
+plugins/statusbar-comment/statusbar-comment.plugin.desktop.in.in
 plugins/statusbar-date/statusbar-date.plugin.desktop.in.in
 src/eom-application.c
 src/eom-close-confirmation-dialog.c
