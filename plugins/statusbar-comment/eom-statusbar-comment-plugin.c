@@ -230,41 +230,16 @@ edit_comment_cb (GtkAction                *action,
 		} else {
 			GtkTextIter start, end;
 			gchar *new_comment;
-			GError *error = NULL;
 
 			gtk_text_buffer_get_bounds (buffer, &start, &end);
 			new_comment = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
 
+			/* Keep comment in-memory; it is written by normal Save/Save As flow. */
 			eom_image_set_comment (image, new_comment);
-
-			/* Persist directly to disk without touching undo/transform state. */
-			if (eom_image_save_comment (image, &error)) {
-				statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
-				                       EOM_THUMB_VIEW (eom_window_get_thumb_view (plugin->window)));
-				g_free (new_comment);
-				break;
-			}
-
-			/* Keep the editor open so the user can correct and retry. */
-			{
-				GtkWidget *err_dialog;
-				const gchar *details = (error != NULL) ? error->message : _("Unknown error.");
-
-				err_dialog = gtk_message_dialog_new (GTK_WINDOW (dialog),
-				                                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-				                                     GTK_MESSAGE_ERROR,
-				                                     GTK_BUTTONS_CLOSE,
-				                                     "%s",
-				                                     _("Could not save image comment."));
-				gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (err_dialog),
-				                                          "%s",
-				                                          details);
-				gtk_dialog_run (GTK_DIALOG (err_dialog));
-				gtk_widget_destroy (err_dialog);
-			}
-
-			g_clear_error (&error);
+			statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
+			                       EOM_THUMB_VIEW (eom_window_get_thumb_view (plugin->window)));
 			g_free (new_comment);
+			break;
 		}
 	}
 

@@ -110,6 +110,51 @@ output_message_handler (j_common_ptr cinfo)
 	/* do nothing */
 }
 
+static gboolean
+prepare_comment_for_save (EomImagePrivate *priv,
+                          gchar          **comment_utf8,
+                          const gchar    **comment_to_write,
+                          gsize           *comment_len,
+                          GError         **error)
+{
+	g_return_val_if_fail (priv != NULL, FALSE);
+	g_return_val_if_fail (comment_utf8 != NULL, FALSE);
+	g_return_val_if_fail (comment_to_write != NULL, FALSE);
+	g_return_val_if_fail (comment_len != NULL, FALSE);
+
+	*comment_utf8 = NULL;
+	*comment_to_write = NULL;
+	*comment_len = 0;
+
+	/* Empty or NULL means "remove COM marker". */
+	if (priv->comment == NULL || *priv->comment == '\0') {
+		return TRUE;
+	}
+
+	if (g_utf8_validate (priv->comment, -1, NULL)) {
+		*comment_to_write = priv->comment;
+	} else {
+		*comment_utf8 = eom_util_make_valid_utf8 (priv->comment);
+		*comment_to_write = *comment_utf8;
+	}
+
+	*comment_len = strlen (*comment_to_write);
+	/* JPEG marker payload is 16-bit length field minus marker length bytes. */
+	if (*comment_len > 65533u) {
+		g_set_error (error,
+		             GDK_PIXBUF_ERROR,
+		             GDK_PIXBUF_ERROR_BAD_OPTION,
+		             _("Image comment is too long to store in JPEG format."));
+		g_free (*comment_utf8);
+		*comment_utf8 = NULL;
+		*comment_to_write = NULL;
+		*comment_len = 0;
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
 static void
 init_transform_info (EomImage *image, jpeg_transform_info *info)
 {
@@ -191,11 +236,27 @@ _save_jpeg_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 	FILE                          *input_file;
 	EomImagePrivate               *priv;
 	gchar                          *infile_uri;
+	gchar                         *comment_utf8 = NULL;
+	const gchar                   *comment_to_write = NULL;
+	gsize                          comment_len = 0;
+	gboolean                       rewrite_comment;
+	JCOPY_OPTION                   marker_copy_option;
 
 	g_return_val_if_fail (EOM_IS_IMAGE (image), FALSE);
 	g_return_val_if_fail (EOM_IMAGE (image)->priv->file != NULL, FALSE);
 
 	priv = image->priv;
+	rewrite_comment = priv->comment_changed;
+	marker_copy_option = rewrite_comment ? JCOPYOPT_NONE : JCOPYOPT_DEFAULT;
+	if (rewrite_comment) {
+		if (!prepare_comment_for_save (priv,
+		                               &comment_utf8,
+		                               &comment_to_write,
+		                               &comment_len,
+		                               error)) {
+			return FALSE;
+		}
+	}
 
 	init_transform_info (image, &transformoption);
 
@@ -232,6 +293,7 @@ _save_jpeg_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 	input_file = fopen (infile_uri, "rb");
 	if (input_file == NULL) {
 		g_warning ("Input file not openable: %s\n", infile_uri);
+		g_free (comment_utf8);
 		g_free (jsrcerr.filename);
 		g_free (infile_uri);
 		return FALSE;
@@ -242,6 +304,7 @@ _save_jpeg_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 	if (output_file == NULL) {
 		g_warning ("Output file not openable: %s\n", file);
 		fclose (input_file);
+		g_free (comment_utf8);
 		g_free (jsrcerr.filename);
 		return FALSE;
 	}
@@ -251,6 +314,7 @@ _save_jpeg_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 		fclose (input_file);
 		jpeg_destroy_compress (&dstinfo);
 		jpeg_destroy_decompress (&srcinfo);
+		g_free (comment_utf8);
 		g_free (jsrcerr.filename);
 		return FALSE;
 	}
@@ -260,6 +324,7 @@ _save_jpeg_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 		fclose (input_file);
 		jpeg_destroy_compress (&dstinfo);
 		jpeg_destroy_decompress (&srcinfo);
+		g_free (comment_utf8);
 		g_free (jsrcerr.filename);
 		return FALSE;
 	}
@@ -267,8 +332,7 @@ _save_jpeg_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 	/* Specify data source for decompression */
 	jpeg_stdio_src (&srcinfo, input_file);
 
-	/* Enable saving of extra markers that we want to copy */
-	jcopy_markers_setup (&srcinfo, JCOPYOPT_DEFAULT);
+	jcopy_markers_setup (&srcinfo, marker_copy_option);
 
 	/* Read file header */
 	(void) jpeg_read_header (&srcinfo, TRUE);
@@ -318,9 +382,16 @@ _save_jpeg_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 #endif
 	/* FIXME: Consider IPTC data too */
 
+	if (rewrite_comment && comment_to_write != NULL) {
+		jpeg_write_marker (&dstinfo,
+		                   JPEG_COM,
+		                   (const JOCTET *) comment_to_write,
+		                   (unsigned int) comment_len);
+	}
+
 	/* Copy to the output file any extra markers that we want to
 	 * preserve */
-	jcopy_markers_execute (&srcinfo, &dstinfo, JCOPYOPT_DEFAULT);
+	jcopy_markers_execute (&srcinfo, &dstinfo, marker_copy_option);
 
 	/* Execute image transformation, if any */
 	jtransform_execute_transformation (&srcinfo,
@@ -333,6 +404,7 @@ _save_jpeg_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 	jpeg_destroy_compress (&dstinfo);
 	(void) jpeg_finish_decompress (&srcinfo);
 	jpeg_destroy_decompress (&srcinfo);
+	g_free (comment_utf8);
 	g_free (jsrcerr.filename);
 
 	/* Close files */
@@ -360,12 +432,22 @@ _save_any_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 	int rowstride = 0;
 	FILE *outfile;
 	struct error_handler_data jerr;
+	gchar *comment_utf8 = NULL;
+	const gchar *comment_to_write = NULL;
+	gsize comment_len = 0;
 
 	g_return_val_if_fail (EOM_IS_IMAGE (image), FALSE);
 	g_return_val_if_fail (EOM_IMAGE (image)->priv->image != NULL, FALSE);
 
 	priv = image->priv;
 	pixbuf = priv->image;
+	if (!prepare_comment_for_save (priv,
+	                               &comment_utf8,
+	                               &comment_to_write,
+	                               &comment_len,
+	                               error)) {
+		return FALSE;
+	}
 
 	rowstride = gdk_pixbuf_get_rowstride (pixbuf);
 	w = gdk_pixbuf_get_width (pixbuf);
@@ -382,6 +464,7 @@ _save_any_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 			     GDK_PIXBUF_ERROR_INSUFFICIENT_MEMORY,
 			     _("Couldn't create temporary file for saving: %s"),
 			     file);
+		g_free (comment_utf8);
 		return FALSE;
 	}
 
@@ -393,6 +476,7 @@ _save_any_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 			     GDK_PIXBUF_ERROR_INSUFFICIENT_MEMORY,
 			     _("Couldn't allocate memory for loading JPEG file"));
 		fclose (outfile);
+		g_free (comment_utf8);
 		return FALSE;
 	}
 
@@ -416,6 +500,7 @@ _save_any_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 		g_free (buf);
 		fclose (outfile);
 		jpeg_destroy_compress (&cinfo);
+		g_free (comment_utf8);
 		return FALSE;
 	}
 
@@ -449,6 +534,13 @@ _save_any_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 #endif
 	/* FIXME: Consider IPTC data too */
 
+	if (comment_to_write != NULL) {
+		jpeg_write_marker (&cinfo,
+		                   JPEG_COM,
+		                   (const JOCTET *) comment_to_write,
+		                   (unsigned int) comment_len);
+	}
+
 	/* get the start pointer */
 	ptr = pixels;
 	/* go one scanline at a time... and save */
@@ -470,6 +562,7 @@ _save_any_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 	jpeg_finish_compress (&cinfo);
 	jpeg_destroy_compress(&cinfo);
 	g_free (buf);
+	g_free (comment_utf8);
 
 	fclose (outfile);
 
@@ -521,25 +614,12 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 
 	priv = image->priv;
 
-	/* JPEG COM is stored as bytes; normalize to valid UTF-8 before writing. */
-	if (priv->comment != NULL && *priv->comment != '\0') {
-		if (g_utf8_validate (priv->comment, -1, NULL)) {
-			comment_to_write = priv->comment;
-		} else {
-			comment_utf8 = eom_util_make_valid_utf8 (priv->comment);
-			comment_to_write = comment_utf8;
-		}
-
-		comment_len = strlen (comment_to_write);
-		/* JPEG marker payload is 16-bit length field minus marker length bytes. */
-		if (comment_len > 65533u) {
-			g_set_error (error,
-			             GDK_PIXBUF_ERROR,
-			             GDK_PIXBUF_ERROR_BAD_OPTION,
-			             _("Image comment is too long to store in JPEG format."));
-			g_free (comment_utf8);
-			return FALSE;
-		}
+	if (!prepare_comment_for_save (priv,
+	                               &comment_utf8,
+	                               &comment_to_write,
+	                               &comment_len,
+	                               error)) {
+		return FALSE;
 	}
 
 	memset (&transformoption, 0, sizeof (jpeg_transform_info));

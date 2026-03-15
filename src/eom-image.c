@@ -175,6 +175,7 @@ eom_image_dispose (GObject *object)
 		g_free (priv->comment);
 		priv->comment = NULL;
 	}
+	priv->comment_changed = FALSE;
 
 	if (priv->collate_key) {
 		g_free (priv->collate_key);
@@ -830,16 +831,25 @@ eom_image_set_comment_data (EomImage *img, EomMetadataReader *md_reader)
 	g_return_if_fail (EOM_IS_IMAGE (img));
 
 	priv = img->priv;
+	comment = eom_metadata_reader_get_comment (md_reader);
 
+	/* Keep unsaved in-memory comment edits when metadata is reloaded. */
+	if (priv->comment_changed) {
+		eom_debug_message (DEBUG_IMAGE_DATA,
+		                   "Skipping metadata comment refresh because an unsaved comment edit is pending.");
+		g_free (comment);
+		return;
+	}
+
+	/* Ownership of the returned string is transferred to the image */
 	if (priv->comment) {
 		g_free (priv->comment);
 		priv->comment = NULL;
 	}
-
-	comment = eom_metadata_reader_get_comment (md_reader);
-
-	/* Ownership of the returned string is transferred to the image */
 	priv->comment = comment;
+	priv->comment_changed = FALSE;
+	eom_debug_message (DEBUG_IMAGE_DATA,
+	                   "Image comment refreshed from metadata reader.");
 }
 
 static void
@@ -1681,6 +1691,7 @@ eom_image_reset_modifications (EomImage *image)
 		priv->trans_autorotate = NULL;
 	}
 
+	priv->comment_changed = FALSE;
 	priv->modified = FALSE;
 }
 
@@ -1902,6 +1913,13 @@ eom_image_save_comment (EomImage *img, GError **error)
 	if (success) {
 		/* Atomic replace preserves file metadata and reports VFS failures. */
 		success = tmp_file_move_to_uri (img, tmp_file, priv->file, TRUE, error);
+	}
+
+	if (success) {
+		/* "Save now" should clear only comment-only dirty state. */
+		priv->comment_changed = FALSE;
+		priv->modified = (priv->undo_stack != NULL);
+		eom_image_modified (img);
 	}
 
 	tmp_file_delete (tmp_file);
@@ -2143,18 +2161,29 @@ void
 eom_image_set_comment (EomImage *img, const gchar *comment)
 {
 	EomImagePrivate *priv;
+	const gchar *new_comment;
 
 	g_return_if_fail (EOM_IS_IMAGE (img));
 
 	priv = img->priv;
+	new_comment = (comment != NULL && *comment != '\0') ? comment : NULL;
+
+	/* Do not dirty the image if comment text did not actually change. */
+	if (g_strcmp0 (priv->comment, new_comment) == 0) {
+		return;
+	}
 
 	g_free (priv->comment);
 	priv->comment = NULL;
 
 	/* Empty string means remove comment from image. */
-	if (comment != NULL && *comment != '\0') {
-		priv->comment = g_strdup (comment);
+	if (new_comment != NULL) {
+		priv->comment = g_strdup (new_comment);
 	}
+
+	priv->comment_changed = TRUE;
+	priv->modified = TRUE;
+	eom_image_modified (img);
 }
 
 const gchar*
