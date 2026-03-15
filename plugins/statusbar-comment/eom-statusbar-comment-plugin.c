@@ -30,6 +30,7 @@
 
 #include <eom-debug.h>
 #include <eom-image.h>
+#include <eom-list-store.h>
 #include <eom-thumb-view.h>
 #include <eom-window.h>
 #include <eom-window-activatable.h>
@@ -37,6 +38,7 @@
 static void eom_window_activatable_iface_init (EomWindowActivatableInterface *iface);
 static void statusbar_set_comment (GtkLabel    *statusbar_comment,
                                    EomThumbView *view);
+static void update_edit_comment_action_sensitivity (EomStatusbarCommentPlugin *plugin);
 
 G_DEFINE_DYNAMIC_TYPE_EXTENDED (EomStatusbarCommentPlugin,
                                 eom_statusbar_comment_plugin,
@@ -57,6 +59,27 @@ static const gchar* const ui_definition =
 	"<menuitem name=\"EomPluginEditComment\" action=\"EomPluginEditComment\"/>"
 	"<separator name=\"EomPluginCommentSep2\"/>"
 	"</menu></menubar></ui>";
+
+static gboolean
+prepared_idle_cb (gpointer user_data)
+{
+	EomStatusbarCommentPlugin *plugin = EOM_STATUSBAR_COMMENT_PLUGIN (user_data);
+	GtkWidget *thumbview;
+
+	/* One-shot deferred refresh to catch startup ordering races. */
+	plugin->prepared_idle_id = 0;
+
+	if (plugin->window == NULL || plugin->statusbar_comment == NULL) {
+		return G_SOURCE_REMOVE;
+	}
+
+	thumbview = eom_window_get_thumb_view (plugin->window);
+	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
+	                       EOM_THUMB_VIEW (thumbview));
+	update_edit_comment_action_sensitivity (plugin);
+
+	return G_SOURCE_REMOVE;
+}
 
 static void
 update_edit_comment_action_sensitivity (EomStatusbarCommentPlugin *plugin)
@@ -80,6 +103,27 @@ update_edit_comment_action_sensitivity (EomStatusbarCommentPlugin *plugin)
 	image = eom_window_get_image (plugin->window);
 	if (image != NULL) {
 		sensitive = eom_image_is_jpeg (image);
+	} else {
+		GtkWidget *thumbview;
+
+		/* Fall back to selection/store during command-line startup races. */
+		thumbview = eom_window_get_thumb_view (plugin->window);
+		image = eom_thumb_view_get_first_selected_image (EOM_THUMB_VIEW (thumbview));
+		if (image != NULL) {
+			sensitive = eom_image_is_jpeg (image);
+			g_object_unref (image);
+		} else {
+			EomListStore *store;
+
+			store = eom_window_get_store (plugin->window);
+			if (store != NULL && eom_list_store_length (store) > 0) {
+				image = eom_list_store_get_image_by_pos (store, 0);
+				if (image != NULL) {
+					sensitive = eom_image_is_jpeg (image);
+					g_object_unref (image);
+				}
+			}
+		}
 	}
 
 	G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
@@ -101,7 +145,26 @@ edit_comment_cb (GtkAction                *action,
 	gint response;
 
 	image = eom_window_get_image (plugin->window);
+	if (image == NULL) {
+		GtkWidget *thumbview;
+
+		/* Reuse the same fallback chain as sensitivity checks. */
+		thumbview = eom_window_get_thumb_view (plugin->window);
+		image = eom_thumb_view_get_first_selected_image (EOM_THUMB_VIEW (thumbview));
+		if (image == NULL) {
+			EomListStore *store;
+
+			store = eom_window_get_store (plugin->window);
+			if (store != NULL && eom_list_store_length (store) > 0) {
+				image = eom_list_store_get_image_by_pos (store, 0);
+			}
+		}
+	}
+
 	if (image == NULL || !eom_image_is_jpeg (image)) {
+		if (image != NULL) {
+			g_object_unref (image);
+		}
 		return;
 	}
 
@@ -147,6 +210,7 @@ edit_comment_cb (GtkAction                *action,
 
 			eom_image_set_comment (image, new_comment);
 
+			/* Persist directly to disk without touching undo/transform state. */
 			if (eom_image_save_comment (image, &error)) {
 				statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
 				                       EOM_THUMB_VIEW (eom_window_get_thumb_view (plugin->window)));
@@ -178,6 +242,7 @@ edit_comment_cb (GtkAction                *action,
 	}
 
 	gtk_widget_destroy (dialog);
+	g_object_unref (image);
 }
 
 static const GtkActionEntry action_entries[] = {
@@ -206,9 +271,11 @@ statusbar_set_comment (GtkLabel    *statusbar_comment,
 	}
 
 	if (!eom_image_has_data (image, EOM_IMAGE_DATA_EXIF)) {
+		/* Comment is read via metadata path, so ensure EXIF pass happened. */
 		if (!eom_image_load (image, EOM_IMAGE_DATA_EXIF, NULL, NULL)) {
 			gtk_label_set_text (statusbar_comment, "");
 			gtk_widget_hide (GTK_WIDGET (statusbar_comment));
+			g_object_unref (image);
 			return;
 		}
 	}
@@ -217,6 +284,7 @@ statusbar_set_comment (GtkLabel    *statusbar_comment,
 	if (comment == NULL || *comment == '\0') {
 		gtk_label_set_text (statusbar_comment, "");
 		gtk_widget_hide (GTK_WIDGET (statusbar_comment));
+		g_object_unref (image);
 		return;
 	}
 
@@ -229,12 +297,14 @@ statusbar_set_comment (GtkLabel    *statusbar_comment,
 		gtk_label_set_text (statusbar_comment, "");
 		gtk_widget_hide (GTK_WIDGET (statusbar_comment));
 		g_free (clean_comment);
+		g_object_unref (image);
 		return;
 	}
 
 	gtk_label_set_text (statusbar_comment, clean_comment);
 	gtk_widget_show (GTK_WIDGET (statusbar_comment));
 	g_free (clean_comment);
+	g_object_unref (image);
 }
 
 static void
@@ -243,6 +313,28 @@ selection_changed_cb (EomThumbView              *view,
 {
 	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment), view);
 	update_edit_comment_action_sensitivity (plugin);
+}
+
+static void
+window_prepared_cb (EomWindow                 *window,
+                    EomStatusbarCommentPlugin *plugin)
+{
+	GtkWidget *thumbview;
+
+	thumbview = eom_window_get_thumb_view (window);
+	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
+	                       EOM_THUMB_VIEW (thumbview));
+	update_edit_comment_action_sensitivity (plugin);
+
+	if (plugin->prepared_idle_id != 0) {
+		g_source_remove (plugin->prepared_idle_id);
+	}
+
+	/* Run once more in idle after other startup handlers settle state. */
+	plugin->prepared_idle_id = g_idle_add_full (G_PRIORITY_DEFAULT_IDLE,
+	                                            prepared_idle_cb,
+	                                            g_object_ref (plugin),
+	                                            (GDestroyNotify) g_object_unref);
 }
 
 static void
@@ -348,6 +440,11 @@ eom_statusbar_comment_plugin_activate (EomWindowActivatable *activatable)
 
 	plugin->signal_id = g_signal_connect_after (G_OBJECT (thumbview), "selection_changed",
 	                                            G_CALLBACK (selection_changed_cb), plugin);
+	/* Window emits "prepared" when initial image/model loading finishes. */
+	plugin->prepared_signal_id = g_signal_connect (G_OBJECT (window),
+	                                               "prepared",
+	                                               G_CALLBACK (window_prepared_cb),
+	                                               plugin);
 
 	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
 	                       EOM_THUMB_VIEW (thumbview));
@@ -371,6 +468,16 @@ eom_statusbar_comment_plugin_deactivate (EomWindowActivatable *activatable)
 		plugin->signal_id = 0;
 	}
 #endif
+
+	if (plugin->prepared_signal_id != 0) {
+		g_signal_handler_disconnect (window, plugin->prepared_signal_id);
+		plugin->prepared_signal_id = 0;
+	}
+
+	if (plugin->prepared_idle_id != 0) {
+		g_source_remove (plugin->prepared_idle_id);
+		plugin->prepared_idle_id = 0;
+	}
 
 	gtk_container_remove (GTK_CONTAINER (statusbar), plugin->statusbar_comment);
 

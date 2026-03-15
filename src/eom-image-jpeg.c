@@ -481,6 +481,7 @@ copy_markers_without_comments (j_decompress_ptr srcinfo, j_compress_ptr dstinfo)
 {
 	jpeg_saved_marker_ptr marker;
 
+	/* Re-emit every marker except COM; COM is rewritten explicitly below. */
 	for (marker = srcinfo->marker_list; marker != NULL; marker = marker->next) {
 		if (marker->marker == JPEG_COM) {
 			continue;
@@ -517,6 +518,7 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 
 	priv = image->priv;
 
+	/* JPEG COM is stored as bytes; normalize to valid UTF-8 before writing. */
 	if (priv->comment != NULL && *priv->comment != '\0') {
 		if (g_utf8_validate (priv->comment, -1, NULL)) {
 			comment_to_write = priv->comment;
@@ -527,6 +529,7 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 	}
 
 	memset (&transformoption, 0, sizeof (jpeg_transform_info));
+	/* Comment-only save keeps pixels unchanged (no transform/reencode path). */
 	transformoption.transform = JXFORM_NONE;
 	transformoption.trim = FALSE;
 #if JPEG_LIB_VERSION >= 80
@@ -614,6 +617,7 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 
 	copy_markers_without_comments (&srcinfo, &dstinfo);
 
+	/* Empty comment means remove COM marker from output file. */
 	if (comment_to_write != NULL) {
 		jpeg_write_marker (&dstinfo,
 		                   JPEG_COM,

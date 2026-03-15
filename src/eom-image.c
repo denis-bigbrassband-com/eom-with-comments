@@ -1819,6 +1819,7 @@ eom_image_save_comment (EomImage *img, GError **error)
 		     _("JPEG support is not available."));
 	return FALSE;
 #else
+	/* Accept both "jpeg"/"jpg" format names and content-type fallback. */
 	source = eom_image_save_info_new_from_image (img);
 	if (source != NULL && source->format != NULL) {
 		is_jpeg = (g_ascii_strcasecmp (source->format, EOM_FILE_FORMAT_JPEG) == 0 ||
@@ -1878,6 +1879,7 @@ eom_image_save_comment (EomImage *img, GError **error)
 	prev_status = priv->status;
 	priv->status = EOM_IMAGE_STATUS_SAVING;
 
+	/* Follow the existing temp-file save pattern used by image saves. */
 	tmp_file = tmp_file_get ();
 	if (tmp_file == NULL) {
 		g_set_error (error,
@@ -1898,6 +1900,7 @@ eom_image_save_comment (EomImage *img, GError **error)
 	}
 
 	if (success) {
+		/* Atomic replace preserves file metadata and reports VFS failures. */
 		success = tmp_file_move_to_uri (img, tmp_file, priv->file, TRUE, error);
 	}
 
@@ -2148,6 +2151,7 @@ eom_image_set_comment (EomImage *img, const gchar *comment)
 	g_free (priv->comment);
 	priv->comment = NULL;
 
+	/* Empty string means remove comment from image. */
 	if (comment != NULL && *comment != '\0') {
 		priv->comment = g_strdup (comment);
 	}
@@ -2604,7 +2608,37 @@ eom_image_is_file_changed (EomImage *img)
 gboolean
 eom_image_is_jpeg (EomImage *img)
 {
+	GFileInfo *file_info;
+	const gchar *content_type;
+
 	g_return_val_if_fail (EOM_IS_IMAGE (img), FALSE);
 
-	return ((img->priv->file_type != NULL) && (g_ascii_strcasecmp (img->priv->file_type, EOM_FILE_FORMAT_JPEG) == 0));
+	if (img->priv->file_type != NULL &&
+	    (g_ascii_strcasecmp (img->priv->file_type, EOM_FILE_FORMAT_JPEG) == 0 ||
+	     g_ascii_strcasecmp (img->priv->file_type, "jpg") == 0)) {
+		return TRUE;
+	}
+
+	/* Fallback for cases where decoder name is not normalized yet. */
+	if (img->priv->file == NULL) {
+		return FALSE;
+	}
+
+	file_info = g_file_query_info (img->priv->file,
+	                               G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+	                               G_FILE_QUERY_INFO_NONE,
+	                               NULL,
+	                               NULL);
+	if (file_info == NULL) {
+		return FALSE;
+	}
+
+	content_type = g_file_info_get_content_type (file_info);
+	if (content_type != NULL && g_content_type_equals (content_type, "image/jpeg")) {
+		g_object_unref (file_info);
+		return TRUE;
+	}
+
+	g_object_unref (file_info);
+	return FALSE;
 }

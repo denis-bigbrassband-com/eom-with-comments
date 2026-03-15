@@ -54,6 +54,8 @@ struct _EomStatusbarCommentPlugin {
 	guint ui_id;
 	GtkWidget *statusbar_comment;
 	gulong signal_id;
+	gulong prepared_signal_id;
+	guint prepared_idle_id;
 };
 
 struct _EomStatusbarCommentPluginClass {
