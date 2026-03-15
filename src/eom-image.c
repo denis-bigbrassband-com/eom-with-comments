@@ -1801,6 +1801,9 @@ eom_image_save_comment (EomImage *img, GError **error)
 	EomImagePrivate *priv;
 	EomImageStatus prev_status;
 	gboolean success = FALSE;
+	gboolean is_jpeg = FALSE;
+	EomImageSaveInfo *source;
+	GFileInfo *file_info = NULL;
 	GFile *tmp_file;
 	gchar *file_path;
 	gchar *tmp_file_path;
@@ -1816,12 +1819,42 @@ eom_image_save_comment (EomImage *img, GError **error)
 		     _("JPEG support is not available."));
 	return FALSE;
 #else
-	if (!eom_image_is_jpeg (img)) {
+	source = eom_image_save_info_new_from_image (img);
+	if (source != NULL && source->format != NULL) {
+		is_jpeg = (g_ascii_strcasecmp (source->format, EOM_FILE_FORMAT_JPEG) == 0 ||
+		           g_ascii_strcasecmp (source->format, "jpg") == 0);
+	}
+
+	if (!is_jpeg && priv->file != NULL) {
+		file_info = g_file_query_info (priv->file,
+		                               G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+		                               G_FILE_QUERY_INFO_NONE,
+		                               NULL,
+		                               NULL);
+		if (file_info != NULL) {
+			const gchar *content_type;
+
+			content_type = g_file_info_get_content_type (file_info);
+			if (content_type != NULL &&
+			    g_content_type_equals (content_type, "image/jpeg")) {
+				is_jpeg = TRUE;
+			}
+			g_object_unref (file_info);
+		}
+	}
+
+	if (!is_jpeg) {
+		if (source != NULL) {
+			g_object_unref (source);
+		}
 		g_set_error (error,
 			     EOM_IMAGE_ERROR,
 			     EOM_IMAGE_ERROR_GENERIC,
 			     _("Image comments can only be edited for JPEG images."));
 		return FALSE;
+	}
+	if (source != NULL) {
+		g_object_unref (source);
 	}
 
 	if (priv->file == NULL) {
