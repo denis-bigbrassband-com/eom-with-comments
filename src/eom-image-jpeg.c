@@ -505,12 +505,15 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 	jpeg_transform_info            transformoption;
 	jvirt_barray_ptr              *src_coef_arrays;
 	jvirt_barray_ptr              *dst_coef_arrays;
-	FILE                          *output_file;
-	FILE                          *input_file;
+	FILE                          *output_file = NULL;
+	FILE                          *input_file = NULL;
 	EomImagePrivate               *priv;
 	gchar                         *infile_path;
 	gchar                         *comment_utf8 = NULL;
 	const gchar                   *comment_to_write = NULL;
+	gsize                          comment_len = 0;
+	gboolean                       src_created = FALSE;
+	gboolean                       dst_created = FALSE;
 
 	g_return_val_if_fail (EOM_IS_IMAGE (image), FALSE);
 	g_return_val_if_fail (file != NULL, FALSE);
@@ -525,6 +528,17 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 		} else {
 			comment_utf8 = eom_util_make_valid_utf8 (priv->comment);
 			comment_to_write = comment_utf8;
+		}
+
+		comment_len = strlen (comment_to_write);
+		/* JPEG marker payload is 16-bit length field minus marker length bytes. */
+		if (comment_len > 65533u) {
+			g_set_error (error,
+			             GDK_PIXBUF_ERROR,
+			             GDK_PIXBUF_ERROR_BAD_OPTION,
+			             _("Image comment is too long to store in JPEG format."));
+			g_free (comment_utf8);
+			return FALSE;
 		}
 	}
 
@@ -543,6 +557,7 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 	jsrcerr.pub.output_message = output_message_handler;
 	jsrcerr.error = error;
 	jpeg_create_decompress (&srcinfo);
+	src_created = TRUE;
 
 	jdsterr.filename = (char *) file;
 	dstinfo.err = jpeg_std_error (&(jdsterr.pub));
@@ -550,6 +565,7 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 	jdsterr.pub.output_message = output_message_handler;
 	jdsterr.error = error;
 	jpeg_create_compress (&dstinfo);
+	dst_created = TRUE;
 
 	dstinfo.err->trace_level = 0;
 	dstinfo.arith_code = FALSE;
@@ -559,43 +575,42 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 	srcinfo.mem->max_memory_to_use = dstinfo.mem->max_memory_to_use;
 
 	infile_path = g_file_get_path (priv->file);
+	if (infile_path == NULL) {
+		g_set_error (error,
+		             GDK_PIXBUF_ERROR,
+		             GDK_PIXBUF_ERROR_BAD_OPTION,
+		             _("Only local JPEG files can be edited."));
+		goto fail;
+	}
+
 	input_file = fopen (infile_path, "rb");
 	if (input_file == NULL) {
-		g_warning ("Input file not openable: %s\n", infile_path);
-		g_free (comment_utf8);
-		g_free (jsrcerr.filename);
+		g_set_error (error,
+		             GDK_PIXBUF_ERROR,
+		             GDK_PIXBUF_ERROR_FAILED,
+		             _("Couldn't open JPEG file for reading: %s"),
+		             infile_path);
 		g_free (infile_path);
-		return FALSE;
+		goto fail;
 	}
 	g_free (infile_path);
 
 	output_file = fopen (file, "wb");
 	if (output_file == NULL) {
-		g_warning ("Output file not openable: %s\n", file);
-		fclose (input_file);
-		g_free (comment_utf8);
-		g_free (jsrcerr.filename);
-		return FALSE;
+		g_set_error (error,
+		             GDK_PIXBUF_ERROR,
+		             GDK_PIXBUF_ERROR_FAILED,
+		             _("Couldn't create temporary file for saving: %s"),
+		             file);
+		goto fail;
 	}
 
 	if (sigsetjmp (jsrcerr.setjmp_buffer, 1)) {
-		fclose (output_file);
-		fclose (input_file);
-		jpeg_destroy_compress (&dstinfo);
-		jpeg_destroy_decompress (&srcinfo);
-		g_free (comment_utf8);
-		g_free (jsrcerr.filename);
-		return FALSE;
+		goto fail;
 	}
 
 	if (sigsetjmp (jdsterr.setjmp_buffer, 1)) {
-		fclose (output_file);
-		fclose (input_file);
-		jpeg_destroy_compress (&dstinfo);
-		jpeg_destroy_decompress (&srcinfo);
-		g_free (comment_utf8);
-		g_free (jsrcerr.filename);
-		return FALSE;
+		goto fail;
 	}
 
 	jpeg_stdio_src (&srcinfo, input_file);
@@ -622,7 +637,7 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 		jpeg_write_marker (&dstinfo,
 		                   JPEG_COM,
 		                   (const JOCTET *) comment_to_write,
-		                   (unsigned int) strlen (comment_to_write));
+		                   (unsigned int) comment_len);
 	}
 
 	jtransform_execute_transformation (&srcinfo,
@@ -641,6 +656,24 @@ eom_image_jpeg_save_comment_file (EomImage    *image,
 	fclose (output_file);
 
 	return TRUE;
+
+fail:
+	if (output_file != NULL) {
+		fclose (output_file);
+	}
+	if (input_file != NULL) {
+		fclose (input_file);
+	}
+	if (dst_created) {
+		jpeg_destroy_compress (&dstinfo);
+	}
+	if (src_created) {
+		jpeg_destroy_decompress (&srcinfo);
+	}
+	g_free (comment_utf8);
+	g_free (jsrcerr.filename);
+
+	return FALSE;
 }
 
 gboolean

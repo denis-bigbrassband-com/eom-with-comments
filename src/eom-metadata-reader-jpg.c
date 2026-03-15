@@ -100,8 +100,8 @@ typedef enum {
 #define EOM_JPEG_MARKER_APP10   0xEA
 #define EOM_JPEG_MARKER_APP11   0xEB
 #define EOM_JPEG_MARKER_APP12   0xEC
-#define EOM_JPEG_MARKER_APP14   0xED
-#define EOM_JPEG_MARKER_APP13   0xEE
+#define EOM_JPEG_MARKER_APP13   0xED
+#define EOM_JPEG_MARKER_APP14   0xEE
 #define EOM_JPEG_MARKER_APP15   0xEF
 #define EOM_JPEG_MARKER_JPG0    0xF0
 #define EOM_JPEG_MARKER_JPG1    0xF1
@@ -371,7 +371,7 @@ eom_metadata_reader_jpg_consume (EomMetadataReaderJpg *emr, const guchar *buf, g
 			{
 	 			/* Chunk has 14 bytes identification data */
 				priv->state = EMR_READ_ICC;
-			} else if (priv->last_marker == EOM_JPEG_MARKER_APP14 &&
+			} else if (priv->last_marker == EOM_JPEG_MARKER_APP13 &&
 				priv->iptc_chunk == NULL)
 			{
 				priv->state = EMR_READ_IPTC;
