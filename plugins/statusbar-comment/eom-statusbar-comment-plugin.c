@@ -84,6 +84,7 @@ statusbar_set_comment (GtkLabel    *statusbar_comment,
 	}
 
 	clean_comment = g_strdup (comment);
+	/* Keep the statusbar single-line even for multiline comments. */
 	g_strdelimit (clean_comment, "\r\n\t", ' ');
 	g_strstrip (clean_comment);
 
@@ -183,8 +184,10 @@ eom_statusbar_comment_plugin_activate (EomWindowActivatable *activatable)
 	gtk_widget_set_margin_start (plugin->statusbar_comment, 8);
 	gtk_widget_set_margin_top (GTK_WIDGET (plugin->statusbar_comment), 0);
 	gtk_widget_set_margin_bottom (GTK_WIDGET (plugin->statusbar_comment), 0);
+	/* Reserve remaining center space and truncate long comments visually. */
 	gtk_label_set_ellipsize (GTK_LABEL (plugin->statusbar_comment), PANGO_ELLIPSIZE_END);
 	gtk_box_pack_start (GTK_BOX (statusbar), plugin->statusbar_comment, TRUE, TRUE, 0);
+	/* Child index 1 puts comment right after the main status text area. */
 	gtk_box_reorder_child (GTK_BOX (statusbar), plugin->statusbar_comment, 1);
 
 	plugin->signal_id = g_signal_connect_after (G_OBJECT (thumbview), "selection_changed",

@@ -55,7 +55,6 @@
 #include "eom-clipboard-handler.h"
 #include "eom-window-activatable.h"
 #include "eom-metadata-sidebar.h"
-#include "eom-image.h"
 
 #include "eom-enum-types.h"
 
