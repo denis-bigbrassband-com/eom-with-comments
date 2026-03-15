@@ -176,10 +176,13 @@ edit_comment_cb (GtkAction                *action,
 	                                      _("_Save"),
 	                                      GTK_RESPONSE_ACCEPT,
 	                                      NULL);
-	gtk_window_set_default_size (GTK_WINDOW (dialog), 520, 260);
+	gtk_window_set_default_size (GTK_WINDOW (dialog), 760, 260);
 	gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
+	gtk_container_set_border_width (GTK_CONTAINER (dialog), 6);
 
 	content = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+	gtk_container_set_border_width (GTK_CONTAINER (content), 10);
+	gtk_box_set_spacing (GTK_BOX (content), 10);
 	scrolled = gtk_scrolled_window_new (NULL, NULL);
 	gtk_widget_set_hexpand (scrolled, TRUE);
 	gtk_widget_set_vexpand (scrolled, TRUE);
@@ -195,6 +198,30 @@ edit_comment_cb (GtkAction                *action,
 	comment = eom_image_get_comment (image);
 	gtk_text_buffer_set_text (buffer, comment != NULL ? comment : "", -1);
 	gtk_widget_show_all (content);
+
+	{
+		GtkWidget *save_button;
+		GtkWidget *cancel_button;
+
+		save_button = gtk_dialog_get_widget_for_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
+		cancel_button = gtk_dialog_get_widget_for_response (GTK_DIALOG (dialog), GTK_RESPONSE_CANCEL);
+
+		if (save_button != NULL) {
+			gtk_button_set_image (GTK_BUTTON (save_button),
+			                      gtk_image_new_from_icon_name ("document-save", GTK_ICON_SIZE_BUTTON));
+			G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
+			gtk_button_set_always_show_image (GTK_BUTTON (save_button), TRUE);
+			G_GNUC_END_IGNORE_DEPRECATIONS;
+		}
+
+		if (cancel_button != NULL) {
+			gtk_button_set_image (GTK_BUTTON (cancel_button),
+			                      gtk_image_new_from_icon_name ("window-close", GTK_ICON_SIZE_BUTTON));
+			G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
+			gtk_button_set_always_show_image (GTK_BUTTON (cancel_button), TRUE);
+			G_GNUC_END_IGNORE_DEPRECATIONS;
+		}
+	}
 
 	for (;;) {
 		response = gtk_dialog_run (GTK_DIALOG (dialog));
