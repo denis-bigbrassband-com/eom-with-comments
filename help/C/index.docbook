@@ -365,6 +365,7 @@
 	  <term>Statusbar</term>
 	  <listitem>
 	    <para>The statusbar provides information about the image. To show or hide the statusbar, choose <menuchoice><guimenu>View</guimenu><guimenuitem>Statusbar</guimenuitem></menuchoice>.</para>
+	    <para>You can extend the statusbar with plugins. For example, the <guilabel>Statusbar Comment</guilabel> plugin can display the current image comment extracted from EXIF metadata.</para>
 	  </listitem>
 	</varlistentry>
 	<varlistentry>
@@ -827,6 +828,12 @@
 			<term><guilabel>Statusbar Date</guilabel></term>
 			<listitem>
 			<para>Displays the date when the photo was taken in the statusbar, extracted from the image's EXIF metadata. This is particularly useful for digital photos taken with a camera that records the capture date.</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><guilabel>Statusbar Comment</guilabel></term>
+			<listitem>
+			<para>Displays the comment in the statusbar, extracted from the image's EXIF metadata.</para>
 			</listitem>
 		</varlistentry>
 		</variablelist>
