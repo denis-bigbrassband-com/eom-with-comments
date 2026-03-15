@@ -834,6 +834,7 @@
 			<term><guilabel>Statusbar Comment</guilabel></term>
 			<listitem>
 			<para>Displays the comment in the statusbar, extracted from the image's EXIF metadata.</para>
+			<para>When this plugin is enabled, you can edit JPEG comments from <menuchoice><guimenu>Edit</guimenu><guimenuitem>Edit comment</guimenuitem></menuchoice> or by pressing <keycombo><keycap>Ctrl</keycap><keycap>I</keycap></keycombo>.</para>
 			</listitem>
 		</varlistentry>
 		</variablelist>

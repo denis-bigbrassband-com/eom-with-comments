@@ -34,6 +34,7 @@
 
 #include "eom-image-jpeg.h"
 #include "eom-image-private.h"
+#include "eom-util.h"
 
 #if HAVE_JPEG
 
@@ -471,6 +472,169 @@ _save_any_as_jpeg (EomImage *image, const char *file, EomImageSaveInfo *source,
 	g_free (buf);
 
 	fclose (outfile);
+
+	return TRUE;
+}
+
+static void
+copy_markers_without_comments (j_decompress_ptr srcinfo, j_compress_ptr dstinfo)
+{
+	jpeg_saved_marker_ptr marker;
+
+	for (marker = srcinfo->marker_list; marker != NULL; marker = marker->next) {
+		if (marker->marker == JPEG_COM) {
+			continue;
+		}
+
+		jpeg_write_marker (dstinfo,
+		                   marker->marker,
+		                   marker->data,
+		                   marker->data_length);
+	}
+}
+
+gboolean
+eom_image_jpeg_save_comment_file (EomImage    *image,
+                                  const gchar *file,
+                                  GError     **error)
+{
+	struct jpeg_decompress_struct  srcinfo;
+	struct jpeg_compress_struct    dstinfo;
+	struct error_handler_data      jsrcerr, jdsterr;
+	jpeg_transform_info            transformoption;
+	jvirt_barray_ptr              *src_coef_arrays;
+	jvirt_barray_ptr              *dst_coef_arrays;
+	FILE                          *output_file;
+	FILE                          *input_file;
+	EomImagePrivate               *priv;
+	gchar                         *infile_path;
+	gchar                         *comment_utf8 = NULL;
+	const gchar                   *comment_to_write = NULL;
+
+	g_return_val_if_fail (EOM_IS_IMAGE (image), FALSE);
+	g_return_val_if_fail (file != NULL, FALSE);
+	g_return_val_if_fail (EOM_IMAGE (image)->priv->file != NULL, FALSE);
+
+	priv = image->priv;
+
+	if (priv->comment != NULL && *priv->comment != '\0') {
+		if (g_utf8_validate (priv->comment, -1, NULL)) {
+			comment_to_write = priv->comment;
+		} else {
+			comment_utf8 = eom_util_make_valid_utf8 (priv->comment);
+			comment_to_write = comment_utf8;
+		}
+	}
+
+	memset (&transformoption, 0, sizeof (jpeg_transform_info));
+	transformoption.transform = JXFORM_NONE;
+	transformoption.trim = FALSE;
+#if JPEG_LIB_VERSION >= 80
+	transformoption.crop = FALSE;
+#endif
+	transformoption.force_grayscale = FALSE;
+
+	jsrcerr.filename = g_file_get_path (priv->file);
+	srcinfo.err = jpeg_std_error (&(jsrcerr.pub));
+	jsrcerr.pub.error_exit = fatal_error_handler;
+	jsrcerr.pub.output_message = output_message_handler;
+	jsrcerr.error = error;
+	jpeg_create_decompress (&srcinfo);
+
+	jdsterr.filename = (char *) file;
+	dstinfo.err = jpeg_std_error (&(jdsterr.pub));
+	jdsterr.pub.error_exit = fatal_error_handler;
+	jdsterr.pub.output_message = output_message_handler;
+	jdsterr.error = error;
+	jpeg_create_compress (&dstinfo);
+
+	dstinfo.err->trace_level = 0;
+	dstinfo.arith_code = FALSE;
+	dstinfo.optimize_coding = FALSE;
+
+	jsrcerr.pub.trace_level = jdsterr.pub.trace_level;
+	srcinfo.mem->max_memory_to_use = dstinfo.mem->max_memory_to_use;
+
+	infile_path = g_file_get_path (priv->file);
+	input_file = fopen (infile_path, "rb");
+	if (input_file == NULL) {
+		g_warning ("Input file not openable: %s\n", infile_path);
+		g_free (comment_utf8);
+		g_free (jsrcerr.filename);
+		g_free (infile_path);
+		return FALSE;
+	}
+	g_free (infile_path);
+
+	output_file = fopen (file, "wb");
+	if (output_file == NULL) {
+		g_warning ("Output file not openable: %s\n", file);
+		fclose (input_file);
+		g_free (comment_utf8);
+		g_free (jsrcerr.filename);
+		return FALSE;
+	}
+
+	if (sigsetjmp (jsrcerr.setjmp_buffer, 1)) {
+		fclose (output_file);
+		fclose (input_file);
+		jpeg_destroy_compress (&dstinfo);
+		jpeg_destroy_decompress (&srcinfo);
+		g_free (comment_utf8);
+		g_free (jsrcerr.filename);
+		return FALSE;
+	}
+
+	if (sigsetjmp (jdsterr.setjmp_buffer, 1)) {
+		fclose (output_file);
+		fclose (input_file);
+		jpeg_destroy_compress (&dstinfo);
+		jpeg_destroy_decompress (&srcinfo);
+		g_free (comment_utf8);
+		g_free (jsrcerr.filename);
+		return FALSE;
+	}
+
+	jpeg_stdio_src (&srcinfo, input_file);
+	/* Preserve all non-comment markers exactly as stored in source file. */
+	jcopy_markers_setup (&srcinfo, JCOPYOPT_ALL);
+
+	(void) jpeg_read_header (&srcinfo, TRUE);
+	jtransform_request_workspace (&srcinfo, &transformoption);
+	src_coef_arrays = jpeg_read_coefficients (&srcinfo);
+
+	jpeg_copy_critical_parameters (&srcinfo, &dstinfo);
+	dst_coef_arrays = jtransform_adjust_parameters (&srcinfo,
+							&dstinfo,
+							src_coef_arrays,
+							&transformoption);
+
+	jpeg_stdio_dest (&dstinfo, output_file);
+	jpeg_write_coefficients (&dstinfo, dst_coef_arrays);
+
+	copy_markers_without_comments (&srcinfo, &dstinfo);
+
+	if (comment_to_write != NULL) {
+		jpeg_write_marker (&dstinfo,
+		                   JPEG_COM,
+		                   (const JOCTET *) comment_to_write,
+		                   (unsigned int) strlen (comment_to_write));
+	}
+
+	jtransform_execute_transformation (&srcinfo,
+					   &dstinfo,
+					   src_coef_arrays,
+					   &transformoption);
+
+	jpeg_finish_compress (&dstinfo);
+	jpeg_destroy_compress (&dstinfo);
+	(void) jpeg_finish_decompress (&srcinfo);
+	jpeg_destroy_decompress (&srcinfo);
+	g_free (comment_utf8);
+	g_free (jsrcerr.filename);
+
+	fclose (input_file);
+	fclose (output_file);
 
 	return TRUE;
 }

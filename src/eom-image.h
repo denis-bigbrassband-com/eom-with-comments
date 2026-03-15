@@ -166,6 +166,10 @@ void              eom_image_modified                 (EomImage   *img);
 const gchar*      eom_image_get_caption              (EomImage   *img);
 
 const gchar*      eom_image_get_comment              (EomImage   *img);
+void              eom_image_set_comment              (EomImage   *img,
+                                                      const gchar *comment);
+gboolean          eom_image_save_comment             (EomImage   *img,
+                                                      GError    **error);
 
 const gchar      *eom_image_get_collate_key          (EomImage   *img);
 

@@ -1,0 +1,8 @@
+[Plugin]
+Module=statusbar-comment
+IAge=2
+Name=Comment in statusbar
+Description=Shows the image comment in the window statusbar
+Authors=MATE Developers
+Copyright=Copyright © 2026 Free Software Foundation
+Website=https://mate-desktop.org

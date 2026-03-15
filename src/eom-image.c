@@ -1795,6 +1795,89 @@ eom_image_save_by_info (EomImage *img, EomImageSaveInfo *source, GError **error)
 	return success;
 }
 
+gboolean
+eom_image_save_comment (EomImage *img, GError **error)
+{
+	EomImagePrivate *priv;
+	EomImageStatus prev_status;
+	gboolean success = FALSE;
+	GFile *tmp_file;
+	gchar *file_path;
+	gchar *tmp_file_path;
+
+	g_return_val_if_fail (EOM_IS_IMAGE (img), FALSE);
+
+	priv = img->priv;
+
+#ifndef HAVE_JPEG
+	g_set_error (error,
+		     EOM_IMAGE_ERROR,
+		     EOM_IMAGE_ERROR_GENERIC,
+		     _("JPEG support is not available."));
+	return FALSE;
+#else
+	if (!eom_image_is_jpeg (img)) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_GENERIC,
+			     _("Image comments can only be edited for JPEG images."));
+		return FALSE;
+	}
+
+	if (priv->file == NULL) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_SAVE_NOT_LOCAL,
+			     _("Saving image comments requires a local file."));
+		return FALSE;
+	}
+
+	file_path = g_file_get_path (priv->file);
+	if (file_path == NULL) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_SAVE_NOT_LOCAL,
+			     _("Saving image comments requires a local file."));
+		return FALSE;
+	}
+	g_free (file_path);
+
+	prev_status = priv->status;
+	priv->status = EOM_IMAGE_STATUS_SAVING;
+
+	tmp_file = tmp_file_get ();
+	if (tmp_file == NULL) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_TMP_FILE_FAILED,
+			     _("Temporary file creation failed."));
+		priv->status = prev_status;
+		return FALSE;
+	}
+
+	tmp_file_path = g_file_get_path (tmp_file);
+	success = eom_image_jpeg_save_comment_file (img, tmp_file_path, error);
+	if (!success && error != NULL && *error == NULL) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_GENERIC,
+			     _("Could not write image comment data."));
+	}
+
+	if (success) {
+		success = tmp_file_move_to_uri (img, tmp_file, priv->file, TRUE, error);
+	}
+
+	tmp_file_delete (tmp_file);
+	g_free (tmp_file_path);
+	g_object_unref (tmp_file);
+
+	priv->status = prev_status;
+
+	return success;
+#endif
+}
+
 static gboolean
 eom_image_copy_file (EomImage *image, EomImageSaveInfo *source, EomImageSaveInfo *target, GError **error)
 {
@@ -2018,6 +2101,23 @@ eom_image_get_comment (EomImage *img)
 	priv = img->priv;
 
 	return priv->comment;
+}
+
+void
+eom_image_set_comment (EomImage *img, const gchar *comment)
+{
+	EomImagePrivate *priv;
+
+	g_return_if_fail (EOM_IS_IMAGE (img));
+
+	priv = img->priv;
+
+	g_free (priv->comment);
+	priv->comment = NULL;
+
+	if (comment != NULL && *comment != '\0') {
+		priv->comment = g_strdup (comment);
+	}
 }
 
 const gchar*

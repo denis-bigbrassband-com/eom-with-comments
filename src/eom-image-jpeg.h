@@ -17,6 +17,11 @@ G_GNUC_INTERNAL
 gboolean eom_image_jpeg_save_file (EomImage *image, const char *file,
 				   EomImageSaveInfo *source, EomImageSaveInfo *target,
 				   GError **error);
+
+G_GNUC_INTERNAL
+gboolean eom_image_jpeg_save_comment_file (EomImage    *image,
+                                           const gchar *file,
+                                           GError     **error);
 #endif
 
 #endif /* _EOM_IMAGE_JPEG_H_ */

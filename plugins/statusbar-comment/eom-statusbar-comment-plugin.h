@@ -50,6 +50,8 @@ struct _EomStatusbarCommentPlugin {
 	PeasExtensionBase parent_instance;
 
 	EomWindow *window;
+	GtkActionGroup *ui_action_group;
+	guint ui_id;
 	GtkWidget *statusbar_comment;
 	gulong signal_id;
 };

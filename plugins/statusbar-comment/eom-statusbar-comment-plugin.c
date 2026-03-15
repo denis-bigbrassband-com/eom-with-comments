@@ -24,6 +24,7 @@
 #include "eom-statusbar-comment-plugin.h"
 
 #include <gmodule.h>
+#include <glib/gi18n-lib.h>
 #include <libpeas/peas-activatable.h>
 #include <pango/pango.h>
 
@@ -34,6 +35,8 @@
 #include <eom-window-activatable.h>
 
 static void eom_window_activatable_iface_init (EomWindowActivatableInterface *iface);
+static void statusbar_set_comment (GtkLabel    *statusbar_comment,
+                                   EomThumbView *view);
 
 G_DEFINE_DYNAMIC_TYPE_EXTENDED (EomStatusbarCommentPlugin,
                                 eom_statusbar_comment_plugin,
@@ -45,6 +48,140 @@ G_DEFINE_DYNAMIC_TYPE_EXTENDED (EomStatusbarCommentPlugin,
 enum {
 	PROP_0,
 	PROP_WINDOW
+};
+
+static const gchar* const ui_definition =
+	"<ui><menubar name=\"MainMenu\">"
+	"<menu name=\"Edit\" action=\"Edit\">"
+	"<separator name=\"EomPluginCommentSep1\"/>"
+	"<menuitem name=\"EomPluginEditComment\" action=\"EomPluginEditComment\"/>"
+	"<separator name=\"EomPluginCommentSep2\"/>"
+	"</menu></menubar></ui>";
+
+static void
+update_edit_comment_action_sensitivity (EomStatusbarCommentPlugin *plugin)
+{
+	EomImage *image;
+	GtkAction *action;
+	gboolean sensitive = FALSE;
+
+	if (plugin->ui_action_group == NULL) {
+		return;
+	}
+
+	G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
+	action = gtk_action_group_get_action (plugin->ui_action_group, "EomPluginEditComment");
+	G_GNUC_END_IGNORE_DEPRECATIONS;
+
+	if (action == NULL) {
+		return;
+	}
+
+	image = eom_window_get_image (plugin->window);
+	if (image != NULL) {
+		sensitive = eom_image_is_jpeg (image);
+	}
+
+	G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
+	gtk_action_set_sensitive (action, sensitive);
+	G_GNUC_END_IGNORE_DEPRECATIONS;
+}
+
+static void
+edit_comment_cb (GtkAction                *action,
+                 EomStatusbarCommentPlugin *plugin)
+{
+	GtkWidget *dialog;
+	GtkWidget *content;
+	GtkWidget *scrolled;
+	GtkWidget *text_view;
+	GtkTextBuffer *buffer;
+	EomImage *image;
+	const gchar *comment;
+	gint response;
+
+	image = eom_window_get_image (plugin->window);
+	if (image == NULL || !eom_image_is_jpeg (image)) {
+		return;
+	}
+
+	dialog = gtk_dialog_new_with_buttons (_("Image Comment"),
+	                                      GTK_WINDOW (plugin->window),
+	                                      GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+	                                      _("_Cancel"),
+	                                      GTK_RESPONSE_CANCEL,
+	                                      _("_Save"),
+	                                      GTK_RESPONSE_ACCEPT,
+	                                      NULL);
+	gtk_window_set_default_size (GTK_WINDOW (dialog), 520, 260);
+	gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
+
+	content = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+	scrolled = gtk_scrolled_window_new (NULL, NULL);
+	gtk_widget_set_hexpand (scrolled, TRUE);
+	gtk_widget_set_vexpand (scrolled, TRUE);
+	gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW (scrolled), GTK_SHADOW_IN);
+	gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scrolled),
+	                                GTK_POLICY_AUTOMATIC,
+	                                GTK_POLICY_AUTOMATIC);
+	gtk_box_pack_start (GTK_BOX (content), scrolled, TRUE, TRUE, 6);
+
+	text_view = gtk_text_view_new ();
+	gtk_container_add (GTK_CONTAINER (scrolled), text_view);
+	buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (text_view));
+	comment = eom_image_get_comment (image);
+	gtk_text_buffer_set_text (buffer, comment != NULL ? comment : "", -1);
+	gtk_widget_show_all (content);
+
+	for (;;) {
+		response = gtk_dialog_run (GTK_DIALOG (dialog));
+		if (response != GTK_RESPONSE_ACCEPT) {
+			break;
+		} else {
+			GtkTextIter start, end;
+			gchar *new_comment;
+			GError *error = NULL;
+
+			gtk_text_buffer_get_bounds (buffer, &start, &end);
+			new_comment = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+
+			eom_image_set_comment (image, new_comment);
+
+			if (eom_image_save_comment (image, &error)) {
+				statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
+				                       EOM_THUMB_VIEW (eom_window_get_thumb_view (plugin->window)));
+				g_free (new_comment);
+				break;
+			}
+
+			/* Keep the editor open so the user can correct and retry. */
+			{
+				GtkWidget *err_dialog;
+				const gchar *details = (error != NULL) ? error->message : _("Unknown error.");
+
+				err_dialog = gtk_message_dialog_new (GTK_WINDOW (dialog),
+				                                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+				                                     GTK_MESSAGE_ERROR,
+				                                     GTK_BUTTONS_CLOSE,
+				                                     "%s",
+				                                     _("Could not save image comment."));
+				gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (err_dialog),
+				                                          "%s",
+				                                          details);
+				gtk_dialog_run (GTK_DIALOG (err_dialog));
+				gtk_widget_destroy (err_dialog);
+			}
+
+			g_clear_error (&error);
+			g_free (new_comment);
+		}
+	}
+
+	gtk_widget_destroy (dialog);
+}
+
+static const GtkActionEntry action_entries[] = {
+	{ "EomPluginEditComment", "document-edit", N_("Edit comment"), "<Control>I", N_("Edit image comment"), G_CALLBACK (edit_comment_cb) }
 };
 
 static void
@@ -105,6 +242,7 @@ selection_changed_cb (EomThumbView              *view,
                       EomStatusbarCommentPlugin *plugin)
 {
 	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment), view);
+	update_edit_comment_action_sensitivity (plugin);
 }
 
 static void
@@ -173,8 +311,26 @@ eom_statusbar_comment_plugin_activate (EomWindowActivatable *activatable)
 	EomWindow *window = plugin->window;
 	GtkWidget *statusbar = eom_window_get_statusbar (window);
 	GtkWidget *thumbview = eom_window_get_thumb_view (window);
+	GtkUIManager *manager;
 
 	eom_debug (DEBUG_PLUGINS);
+
+	manager = eom_window_get_ui_manager (plugin->window);
+
+	G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
+	plugin->ui_action_group = gtk_action_group_new ("EomStatusbarCommentPluginActions");
+#ifdef ENABLE_NLS
+	gtk_action_group_set_translation_domain (plugin->ui_action_group, GETTEXT_PACKAGE);
+#endif
+	gtk_action_group_add_actions (plugin->ui_action_group,
+	                              action_entries,
+	                              G_N_ELEMENTS (action_entries),
+	                              plugin);
+	G_GNUC_END_IGNORE_DEPRECATIONS;
+
+	gtk_ui_manager_insert_action_group (manager, plugin->ui_action_group, -1);
+	plugin->ui_id = gtk_ui_manager_add_ui_from_string (manager, ui_definition, -1, NULL);
+	g_warn_if_fail (plugin->ui_id != 0);
 
 	plugin->statusbar_comment = gtk_label_new (NULL);
 	gtk_label_set_xalign (GTK_LABEL (plugin->statusbar_comment), 0.0f);
@@ -195,6 +351,7 @@ eom_statusbar_comment_plugin_activate (EomWindowActivatable *activatable)
 
 	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
 	                       EOM_THUMB_VIEW (thumbview));
+	update_edit_comment_action_sensitivity (plugin);
 }
 
 static void
@@ -204,6 +361,7 @@ eom_statusbar_comment_plugin_deactivate (EomWindowActivatable *activatable)
 	EomWindow *window = plugin->window;
 	GtkWidget *statusbar = eom_window_get_statusbar (window);
 	GtkWidget *view = eom_window_get_thumb_view (window);
+	GtkUIManager *manager = eom_window_get_ui_manager (plugin->window);
 
 #if GLIB_CHECK_VERSION(2,62,0)
 	g_clear_signal_handler (&plugin->signal_id, view);
@@ -215,6 +373,19 @@ eom_statusbar_comment_plugin_deactivate (EomWindowActivatable *activatable)
 #endif
 
 	gtk_container_remove (GTK_CONTAINER (statusbar), plugin->statusbar_comment);
+
+	if (plugin->ui_id != 0) {
+		gtk_ui_manager_remove_ui (manager, plugin->ui_id);
+		plugin->ui_id = 0;
+	}
+
+	if (plugin->ui_action_group != NULL) {
+		gtk_ui_manager_remove_action_group (manager, plugin->ui_action_group);
+		g_object_unref (plugin->ui_action_group);
+		plugin->ui_action_group = NULL;
+	}
+
+	gtk_ui_manager_ensure_update (manager);
 }
 
 static void
