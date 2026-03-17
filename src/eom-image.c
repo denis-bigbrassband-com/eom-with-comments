@@ -175,6 +175,10 @@ eom_image_dispose (GObject *object)
 		g_free (priv->comment);
 		priv->comment = NULL;
 	}
+	if (priv->comment_saved) {
+		g_free (priv->comment_saved);
+		priv->comment_saved = NULL;
+	}
 	priv->comment_changed = FALSE;
 
 	if (priv->collate_key) {
@@ -293,6 +297,9 @@ eom_image_init (EomImage *img)
 	img->priv->width = -1;
 	img->priv->height = -1;
 	img->priv->modified = FALSE;
+	img->priv->comment = NULL;
+	img->priv->comment_saved = NULL;
+	img->priv->comment_changed = FALSE;
 	img->priv->file_is_changed = FALSE;
 	g_mutex_init (&img->priv->status_mutex);
 	img->priv->status = EOM_IMAGE_STATUS_UNKNOWN;
@@ -847,6 +854,8 @@ eom_image_set_comment_data (EomImage *img, EomMetadataReader *md_reader)
 		priv->comment = NULL;
 	}
 	priv->comment = comment;
+	g_free (priv->comment_saved);
+	priv->comment_saved = g_strdup (priv->comment);
 	priv->comment_changed = FALSE;
 	eom_debug_message (DEBUG_IMAGE_DATA,
 	                   "Image comment refreshed from metadata reader.");
@@ -1460,9 +1469,15 @@ eom_image_undo (EomImage *img)
 			g_object_unref (priv->trans);
 			priv->trans = NULL;
 		}
+	} else if (priv->comment_changed) {
+		/* Undo pending comment edit by restoring last persisted value. */
+		g_free (priv->comment);
+		priv->comment = g_strdup (priv->comment_saved);
+		priv->comment_changed = FALSE;
+		eom_image_modified (img);
 	}
 
-	priv->modified = (priv->undo_stack != NULL);
+	priv->modified = (priv->undo_stack != NULL) || priv->comment_changed;
 }
 
 static GFile *
@@ -1691,6 +1706,8 @@ eom_image_reset_modifications (EomImage *image)
 		priv->trans_autorotate = NULL;
 	}
 
+	g_free (priv->comment_saved);
+	priv->comment_saved = g_strdup (priv->comment);
 	priv->comment_changed = FALSE;
 	priv->modified = FALSE;
 }
@@ -1917,8 +1934,10 @@ eom_image_save_comment (EomImage *img, GError **error)
 
 	if (success) {
 		/* "Save now" should clear only comment-only dirty state. */
+		g_free (priv->comment_saved);
+		priv->comment_saved = g_strdup (priv->comment);
 		priv->comment_changed = FALSE;
-		priv->modified = (priv->undo_stack != NULL);
+		priv->modified = (priv->undo_stack != NULL) || priv->comment_changed;
 		eom_image_modified (img);
 	}
 
@@ -2181,8 +2200,8 @@ eom_image_set_comment (EomImage *img, const gchar *comment)
 		priv->comment = g_strdup (new_comment);
 	}
 
-	priv->comment_changed = TRUE;
-	priv->modified = TRUE;
+	priv->comment_changed = (g_strcmp0 (priv->comment, priv->comment_saved) != 0);
+	priv->modified = (priv->undo_stack != NULL) || priv->comment_changed;
 	eom_image_modified (img);
 }
 

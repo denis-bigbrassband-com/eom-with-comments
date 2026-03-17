@@ -26,6 +26,7 @@
 #include <libpeas/peas-extension-base.h>
 #include <libpeas/peas-object-module.h>
 
+#include <eom-image.h>
 #include <eom-window.h>
 
 G_BEGIN_DECLS
@@ -55,6 +56,8 @@ struct _EomStatusbarCommentPlugin {
 	GtkWidget *statusbar_comment;
 	gulong signal_id;
 	gulong prepared_signal_id;
+	EomImage *tracked_image;
+	gulong image_changed_signal_id;
 	guint prepared_idle_id;
 };
 

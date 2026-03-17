@@ -39,6 +39,8 @@ static void eom_window_activatable_iface_init (EomWindowActivatableInterface *if
 static void statusbar_set_comment (GtkLabel    *statusbar_comment,
                                    EomThumbView *view);
 static void update_edit_comment_action_sensitivity (EomStatusbarCommentPlugin *plugin);
+static void update_tracked_image_signal (EomStatusbarCommentPlugin *plugin,
+                                         EomThumbView              *view);
 
 G_DEFINE_DYNAMIC_TYPE_EXTENDED (EomStatusbarCommentPlugin,
                                 eom_statusbar_comment_plugin,
@@ -313,8 +315,59 @@ static void
 selection_changed_cb (EomThumbView              *view,
                       EomStatusbarCommentPlugin *plugin)
 {
+	update_tracked_image_signal (plugin, view);
 	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment), view);
 	update_edit_comment_action_sensitivity (plugin);
+}
+
+static void
+image_changed_cb (EomImage                  *image,
+                  EomStatusbarCommentPlugin *plugin)
+{
+	GtkWidget *thumbview;
+
+	if (plugin->window == NULL || plugin->statusbar_comment == NULL) {
+		return;
+	}
+
+	thumbview = eom_window_get_thumb_view (plugin->window);
+	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
+	                       EOM_THUMB_VIEW (thumbview));
+	update_edit_comment_action_sensitivity (plugin);
+}
+
+static void
+update_tracked_image_signal (EomStatusbarCommentPlugin *plugin,
+                             EomThumbView              *view)
+{
+	EomImage *selected_image;
+
+	selected_image = eom_thumb_view_get_first_selected_image (view);
+	if (selected_image == plugin->tracked_image) {
+		if (selected_image != NULL) {
+			g_object_unref (selected_image);
+		}
+		return;
+	}
+
+	if (plugin->tracked_image != NULL) {
+		if (plugin->image_changed_signal_id != 0) {
+			g_signal_handler_disconnect (plugin->tracked_image,
+			                             plugin->image_changed_signal_id);
+			plugin->image_changed_signal_id = 0;
+		}
+		g_object_unref (plugin->tracked_image);
+		plugin->tracked_image = NULL;
+	}
+
+	if (selected_image != NULL) {
+		plugin->tracked_image = selected_image;
+		plugin->image_changed_signal_id =
+			g_signal_connect (plugin->tracked_image,
+			                  "changed",
+			                  G_CALLBACK (image_changed_cb),
+			                  plugin);
+	}
 }
 
 static void
@@ -324,6 +377,7 @@ window_prepared_cb (EomWindow                 *window,
 	GtkWidget *thumbview;
 
 	thumbview = eom_window_get_thumb_view (window);
+	update_tracked_image_signal (plugin, EOM_THUMB_VIEW (thumbview));
 	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
 	                       EOM_THUMB_VIEW (thumbview));
 	update_edit_comment_action_sensitivity (plugin);
@@ -394,6 +448,15 @@ eom_statusbar_comment_plugin_dispose (GObject *object)
 		g_object_unref (plugin->window);
 		plugin->window = NULL;
 	}
+	if (plugin->tracked_image != NULL) {
+		if (plugin->image_changed_signal_id != 0) {
+			g_signal_handler_disconnect (plugin->tracked_image,
+			                             plugin->image_changed_signal_id);
+			plugin->image_changed_signal_id = 0;
+		}
+		g_object_unref (plugin->tracked_image);
+		plugin->tracked_image = NULL;
+	}
 
 	G_OBJECT_CLASS (eom_statusbar_comment_plugin_parent_class)->dispose (object);
 }
@@ -448,6 +511,7 @@ eom_statusbar_comment_plugin_activate (EomWindowActivatable *activatable)
 	                                               G_CALLBACK (window_prepared_cb),
 	                                               plugin);
 
+	update_tracked_image_signal (plugin, EOM_THUMB_VIEW (thumbview));
 	statusbar_set_comment (GTK_LABEL (plugin->statusbar_comment),
 	                       EOM_THUMB_VIEW (thumbview));
 	update_edit_comment_action_sensitivity (plugin);
@@ -474,6 +538,16 @@ eom_statusbar_comment_plugin_deactivate (EomWindowActivatable *activatable)
 	if (plugin->prepared_signal_id != 0) {
 		g_signal_handler_disconnect (window, plugin->prepared_signal_id);
 		plugin->prepared_signal_id = 0;
+	}
+
+	if (plugin->tracked_image != NULL) {
+		if (plugin->image_changed_signal_id != 0) {
+			g_signal_handler_disconnect (plugin->tracked_image,
+			                             plugin->image_changed_signal_id);
+			plugin->image_changed_signal_id = 0;
+		}
+		g_object_unref (plugin->tracked_image);
+		plugin->tracked_image = NULL;
 	}
 
 	if (plugin->prepared_idle_id != 0) {
