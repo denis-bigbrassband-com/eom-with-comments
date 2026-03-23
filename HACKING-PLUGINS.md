@@ -346,6 +346,12 @@ gboolean    eom_image_is_jpeg     (EomImage *img);
 
 See `src/eom-window.h` and `src/eom-image.h` for complete API.
 
+If your plugin needs metadata text in the statusbar, use:
+
+```c
+const gchar * eom_image_get_comment (EomImage *img);
+```
+
 ## Building and Testing
 
 ```bash
@@ -368,6 +374,11 @@ Study these plugins in the `plugins/` directory:
 1. **fullscreen** - Simple event handling (double-click to toggle fullscreen)
 2. **reload** - Adding menu items (reload image from disk)
 3. **statusbar-date** - Widget manipulation and EXIF reading
+4. **statusbar-comment** - Widget manipulation and image comment display
+
+`statusbar-comment` is intentionally similar to `statusbar-date`, but it reads
+comment text with `eom_image_get_comment()` and shows that comment in a dedicated
+statusbar widget.
 
 ## Tips
 

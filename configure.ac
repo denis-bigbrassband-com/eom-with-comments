@@ -418,6 +418,7 @@ doc/reference/eom-docs.sgml
 plugins/Makefile
 plugins/fullscreen/fullscreen.plugin.desktop.in
 plugins/reload/reload.plugin.desktop.in
+plugins/statusbar-comment/statusbar-comment.plugin.desktop.in
 plugins/statusbar-date/statusbar-date.plugin.desktop.in
 thumbnailer/Makefile
 thumbnailer/eom-thumbnailer.thumbnailer

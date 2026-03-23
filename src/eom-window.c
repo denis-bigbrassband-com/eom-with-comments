@@ -801,6 +801,29 @@ image_thumb_changed_cb (EomImage *image, gpointer data)
 }
 
 static void
+image_changed_cb (EomImage *image, EomWindow *window)
+{
+	GtkAction *action_undo, *action_save;
+
+	if (window->priv->image != image) {
+		return;
+	}
+
+	G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
+	action_undo =
+		gtk_action_group_get_action (window->priv->actions_image, "EditUndo");
+	action_save =
+		gtk_action_group_get_action (window->priv->actions_image, "ImageSave");
+
+	gtk_action_set_sensitive (action_undo, eom_image_is_modified (image));
+
+	if (!window->priv->save_disabled) {
+		gtk_action_set_sensitive (action_save, eom_image_is_modified (image));
+	}
+	G_GNUC_END_IGNORE_DEPRECATIONS;
+}
+
+static void
 file_changed_info_bar_response (GtkInfoBar *info_bar,
 				gint response,
 				EomWindow *window)
@@ -889,6 +912,9 @@ eom_window_display_image (EomWindow *window, EomImage *image)
 		                  window);
 		g_signal_connect (image, "file-changed",
 		                  G_CALLBACK (image_file_changed_cb),
+		                  window);
+		g_signal_connect (image, "changed",
+		                  G_CALLBACK (image_changed_cb),
 		                  window);
 
 		image_thumb_changed_cb (image, window);
@@ -1317,6 +1343,9 @@ eom_job_load_cb (EomJobLoad *job, gpointer data)
 		g_signal_handlers_disconnect_by_func (priv->image,
 		                                      image_file_changed_cb,
 		                                      window);
+		g_signal_handlers_disconnect_by_func (priv->image,
+		                                      image_changed_cb,
+		                                      window);
 
 		g_object_unref (priv->image);
 	}
@@ -1509,8 +1538,18 @@ handle_image_selection_changed_cb (EomThumbView *thumbview, EomWindow *window)
 	}
 
 	if (eom_image_has_data (image, EOM_IMAGE_DATA_IMAGE)) {
-		if (priv->image != NULL)
+		if (priv->image != NULL) {
+			g_signal_handlers_disconnect_by_func (priv->image,
+			                                      image_thumb_changed_cb,
+			                                      window);
+			g_signal_handlers_disconnect_by_func (priv->image,
+			                                      image_file_changed_cb,
+			                                      window);
+			g_signal_handlers_disconnect_by_func (priv->image,
+			                                      image_changed_cb,
+			                                      window);
 			g_object_unref (priv->image);
+		}
 
 		priv->image = image;
 		eom_window_display_image (window, image);
@@ -4813,6 +4852,9 @@ eom_window_dispose (GObject *object)
 		                                      window);
 		g_signal_handlers_disconnect_by_func (priv->image,
 		                                      image_file_changed_cb,
+		                                      window);
+		g_signal_handlers_disconnect_by_func (priv->image,
+		                                      image_changed_cb,
 		                                      window);
 		g_object_unref (priv->image);
 		priv->image = NULL;

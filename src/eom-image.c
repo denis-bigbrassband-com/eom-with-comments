@@ -171,6 +171,16 @@ eom_image_dispose (GObject *object)
 		priv->caption = NULL;
 	}
 
+	if (priv->comment) {
+		g_free (priv->comment);
+		priv->comment = NULL;
+	}
+	if (priv->comment_saved) {
+		g_free (priv->comment_saved);
+		priv->comment_saved = NULL;
+	}
+	priv->comment_changed = FALSE;
+
 	if (priv->collate_key) {
 		g_free (priv->collate_key);
 		priv->collate_key = NULL;
@@ -287,6 +297,9 @@ eom_image_init (EomImage *img)
 	img->priv->width = -1;
 	img->priv->height = -1;
 	img->priv->modified = FALSE;
+	img->priv->comment = NULL;
+	img->priv->comment_saved = NULL;
+	img->priv->comment_changed = FALSE;
 	img->priv->file_is_changed = FALSE;
 	g_mutex_init (&img->priv->status_mutex);
 	img->priv->status = EOM_IMAGE_STATUS_UNKNOWN;
@@ -817,6 +830,38 @@ eom_image_set_xmp_data (EomImage *img, EomMetadataReader *md_reader)
 #endif
 
 static void
+eom_image_set_comment_data (EomImage *img, EomMetadataReader *md_reader)
+{
+	EomImagePrivate *priv;
+	gchar *comment;
+
+	g_return_if_fail (EOM_IS_IMAGE (img));
+
+	priv = img->priv;
+	comment = eom_metadata_reader_get_comment (md_reader);
+
+	/* Keep unsaved in-memory comment edits when metadata is reloaded. */
+	if (priv->comment_changed) {
+		eom_debug_message (DEBUG_IMAGE_DATA,
+		                   "Skipping metadata comment refresh because an unsaved comment edit is pending.");
+		g_free (comment);
+		return;
+	}
+
+	/* Ownership of the returned string is transferred to the image */
+	if (priv->comment) {
+		g_free (priv->comment);
+		priv->comment = NULL;
+	}
+	priv->comment = comment;
+	g_free (priv->comment_saved);
+	priv->comment_saved = g_strdup (priv->comment);
+	priv->comment_changed = FALSE;
+	eom_debug_message (DEBUG_IMAGE_DATA,
+	                   "Image comment refreshed from metadata reader.");
+}
+
+static void
 eom_image_set_exif_data (EomImage *img, EomMetadataReader *md_reader)
 {
 	EomImagePrivate *priv;
@@ -1068,6 +1113,7 @@ eom_image_real_load (EomImage *img,
 #ifdef HAVE_EXEMPI
 					eom_image_set_xmp_data (img, md_reader);
 #endif
+					eom_image_set_comment_data (img, md_reader);
 					set_metadata = FALSE;
 					priv->metadata_status = EOM_IMAGE_METADATA_READY;
 				}
@@ -1423,9 +1469,15 @@ eom_image_undo (EomImage *img)
 			g_object_unref (priv->trans);
 			priv->trans = NULL;
 		}
+	} else if (priv->comment_changed) {
+		/* Undo pending comment edit by restoring last persisted value. */
+		g_free (priv->comment);
+		priv->comment = g_strdup (priv->comment_saved);
+		priv->comment_changed = FALSE;
+		eom_image_modified (img);
 	}
 
-	priv->modified = (priv->undo_stack != NULL);
+	priv->modified = (priv->undo_stack != NULL) || priv->comment_changed;
 }
 
 static GFile *
@@ -1654,6 +1706,9 @@ eom_image_reset_modifications (EomImage *image)
 		priv->trans_autorotate = NULL;
 	}
 
+	g_free (priv->comment_saved);
+	priv->comment_saved = g_strdup (priv->comment);
+	priv->comment_changed = FALSE;
 	priv->modified = FALSE;
 }
 
@@ -1766,6 +1821,134 @@ eom_image_save_by_info (EomImage *img, EomImageSaveInfo *source, GError **error)
 	priv->status = prev_status;
 
 	return success;
+}
+
+gboolean
+eom_image_save_comment (EomImage *img, GError **error)
+{
+	EomImagePrivate *priv;
+	EomImageStatus prev_status;
+	gboolean success = FALSE;
+	gboolean is_jpeg = FALSE;
+	EomImageSaveInfo *source;
+	GFileInfo *file_info = NULL;
+	GFile *tmp_file;
+	gchar *file_path;
+	gchar *tmp_file_path;
+
+	g_return_val_if_fail (EOM_IS_IMAGE (img), FALSE);
+
+	priv = img->priv;
+
+#ifndef HAVE_JPEG
+	g_set_error (error,
+		     EOM_IMAGE_ERROR,
+		     EOM_IMAGE_ERROR_GENERIC,
+		     _("JPEG support is not available."));
+	return FALSE;
+#else
+	/* Accept both "jpeg"/"jpg" format names and content-type fallback. */
+	source = eom_image_save_info_new_from_image (img);
+	if (source != NULL && source->format != NULL) {
+		is_jpeg = (g_ascii_strcasecmp (source->format, EOM_FILE_FORMAT_JPEG) == 0 ||
+		           g_ascii_strcasecmp (source->format, "jpg") == 0);
+	}
+
+	if (!is_jpeg && priv->file != NULL) {
+		file_info = g_file_query_info (priv->file,
+		                               G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+		                               G_FILE_QUERY_INFO_NONE,
+		                               NULL,
+		                               NULL);
+		if (file_info != NULL) {
+			const gchar *content_type;
+
+			content_type = g_file_info_get_content_type (file_info);
+			if (content_type != NULL &&
+			    g_content_type_equals (content_type, "image/jpeg")) {
+				is_jpeg = TRUE;
+			}
+			g_object_unref (file_info);
+		}
+	}
+
+	if (!is_jpeg) {
+		if (source != NULL) {
+			g_object_unref (source);
+		}
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_GENERIC,
+			     _("Image comments can only be edited for JPEG images."));
+		return FALSE;
+	}
+	if (source != NULL) {
+		g_object_unref (source);
+	}
+
+	if (priv->file == NULL) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_SAVE_NOT_LOCAL,
+			     _("Saving image comments requires a local file."));
+		return FALSE;
+	}
+
+	file_path = g_file_get_path (priv->file);
+	if (file_path == NULL) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_SAVE_NOT_LOCAL,
+			     _("Saving image comments requires a local file."));
+		return FALSE;
+	}
+	g_free (file_path);
+
+	prev_status = priv->status;
+	priv->status = EOM_IMAGE_STATUS_SAVING;
+
+	/* Follow the existing temp-file save pattern used by image saves. */
+	tmp_file = tmp_file_get ();
+	if (tmp_file == NULL) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_TMP_FILE_FAILED,
+			     _("Temporary file creation failed."));
+		priv->status = prev_status;
+		return FALSE;
+	}
+
+	tmp_file_path = g_file_get_path (tmp_file);
+	success = eom_image_jpeg_save_comment_file (img, tmp_file_path, error);
+	if (!success && error != NULL && *error == NULL) {
+		g_set_error (error,
+			     EOM_IMAGE_ERROR,
+			     EOM_IMAGE_ERROR_GENERIC,
+			     _("Could not write image comment data."));
+	}
+
+	if (success) {
+		/* Atomic replace preserves file metadata and reports VFS failures. */
+		success = tmp_file_move_to_uri (img, tmp_file, priv->file, TRUE, error);
+	}
+
+	if (success) {
+		/* "Save now" should clear only comment-only dirty state. */
+		g_free (priv->comment_saved);
+		priv->comment_saved = g_strdup (priv->comment);
+		priv->comment_changed = FALSE;
+		priv->modified = (priv->undo_stack != NULL) || priv->comment_changed;
+		eom_image_modified (img);
+	}
+
+	tmp_file_delete (tmp_file);
+	g_free (tmp_file_path);
+	g_object_unref (tmp_file);
+
+	priv->status = prev_status;
+
+	return success;
+#endif
 }
 
 static gboolean
@@ -1979,6 +2162,47 @@ eom_image_get_caption (EomImage *img)
 	g_free (scheme);
 
 	return priv->caption;
+}
+
+const gchar*
+eom_image_get_comment (EomImage *img)
+{
+	EomImagePrivate *priv;
+
+	g_return_val_if_fail (EOM_IS_IMAGE (img), NULL);
+
+	priv = img->priv;
+
+	return priv->comment;
+}
+
+void
+eom_image_set_comment (EomImage *img, const gchar *comment)
+{
+	EomImagePrivate *priv;
+	const gchar *new_comment;
+
+	g_return_if_fail (EOM_IS_IMAGE (img));
+
+	priv = img->priv;
+	new_comment = (comment != NULL && *comment != '\0') ? comment : NULL;
+
+	/* Do not dirty the image if comment text did not actually change. */
+	if (g_strcmp0 (priv->comment, new_comment) == 0) {
+		return;
+	}
+
+	g_free (priv->comment);
+	priv->comment = NULL;
+
+	/* Empty string means remove comment from image. */
+	if (new_comment != NULL) {
+		priv->comment = g_strdup (new_comment);
+	}
+
+	priv->comment_changed = (g_strcmp0 (priv->comment, priv->comment_saved) != 0);
+	priv->modified = (priv->undo_stack != NULL) || priv->comment_changed;
+	eom_image_modified (img);
 }
 
 const gchar*
@@ -2432,7 +2656,37 @@ eom_image_is_file_changed (EomImage *img)
 gboolean
 eom_image_is_jpeg (EomImage *img)
 {
+	GFileInfo *file_info;
+	const gchar *content_type;
+
 	g_return_val_if_fail (EOM_IS_IMAGE (img), FALSE);
 
-	return ((img->priv->file_type != NULL) && (g_ascii_strcasecmp (img->priv->file_type, EOM_FILE_FORMAT_JPEG) == 0));
+	if (img->priv->file_type != NULL &&
+	    (g_ascii_strcasecmp (img->priv->file_type, EOM_FILE_FORMAT_JPEG) == 0 ||
+	     g_ascii_strcasecmp (img->priv->file_type, "jpg") == 0)) {
+		return TRUE;
+	}
+
+	/* Fallback for cases where decoder name is not normalized yet. */
+	if (img->priv->file == NULL) {
+		return FALSE;
+	}
+
+	file_info = g_file_query_info (img->priv->file,
+	                               G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+	                               G_FILE_QUERY_INFO_NONE,
+	                               NULL,
+	                               NULL);
+	if (file_info == NULL) {
+		return FALSE;
+	}
+
+	content_type = g_file_info_get_content_type (file_info);
+	if (content_type != NULL && g_content_type_equals (content_type, "image/jpeg")) {
+		g_object_unref (file_info);
+		return TRUE;
+	}
+
+	g_object_unref (file_info);
+	return FALSE;
 }

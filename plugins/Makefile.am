@@ -12,11 +12,13 @@ AM_LDFLAGS = -avoid-version -module
 
 plugins_LTLIBRARIES = \
 	fullscreen/libfullscreen.la  \
-	reload/libreload.la
+	reload/libreload.la \
+	statusbar-comment/libstatusbar-comment.la
 
 plugins_in_files = \
 	fullscreen/fullscreen.plugin.desktop.in  \
-	reload/reload.plugin.desktop.in
+	reload/reload.plugin.desktop.in \
+	statusbar-comment/statusbar-comment.plugin.desktop.in
 
 # Fullscreen plugin
 fullscreen_libfullscreen_la_SOURCES = \
@@ -31,6 +33,13 @@ reload_libreload_la_SOURCES = \
 	reload/eom-reload-plugin.c
 
 reload_libreload_la_LIBADD = $(EOM_LIBS)
+
+# Statusbar Comment plugin
+statusbar_comment_libstatusbar_comment_la_SOURCES = \
+	statusbar-comment/eom-statusbar-comment-plugin.h \
+	statusbar-comment/eom-statusbar-comment-plugin.c
+
+statusbar_comment_libstatusbar_comment_la_LIBADD = $(EOM_LIBS)
 
 # Statusbar Date Plugin
 if HAVE_EXIF
